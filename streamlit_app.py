@@ -103,8 +103,8 @@ def login_gate() -> bool:
     pwd = st.sidebar.text_input("Password", type="password", placeholder="Enter password")
     if st.sidebar.button("Sign in", type="primary", use_container_width=True):
         # Get credentials from environment variables
-        valid_user = os.getenv("APP_USERNAME", "admin")
-        valid_pwd = os.getenv("APP_PASSWORD", "changeme")
+        valid_user = st.secrets.get("APP_USERNAME", "admin")
+        valid_pwd = st.secrets.get("APP_PASSWORD", "changeme")
         if user == valid_user and pwd == valid_pwd:
             st.session_state["auth"] = True
             st.sidebar.success("✅ Login successful!")
@@ -336,6 +336,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
