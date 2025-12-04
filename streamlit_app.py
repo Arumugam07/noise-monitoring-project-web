@@ -15,8 +15,12 @@ Assumptions:
 import os
 import pandas as pd
 import streamlit as st
-from dotenv import load_dotenv
 from supabase import create_client
+
+# Optional: load .env for local development
+if "SUPABASE_URL" not in os.environ:
+    from dotenv import load_dotenv
+    load_dotenv()
 
 # Map location IDs → friendly names for column display
 LOCATION_ID_TO_NAME = {
@@ -35,15 +39,14 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view")
+DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", st.secrets.get("SUPABASE_WIDE_VIEW", "wide_view"))
 PAGE_SIZE = 200
 
 
 def get_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_ANON_KEY"]
+    url = os.getenv("SUPABASE_URL") or st.secrets["SUPABASE_URL"]
+    key = os.getenv("SUPABASE_ANON_KEY") or st.secrets["SUPABASE_ANON_KEY"]
     return create_client(url, key)
-
 
 
 def fetch_page(page: int, page_size: int) -> pd.DataFrame:
@@ -333,6 +336,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
