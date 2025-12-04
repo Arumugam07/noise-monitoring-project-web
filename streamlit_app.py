@@ -40,10 +40,10 @@ PAGE_SIZE = 200
 
 
 def get_client():
-    load_dotenv()
-    url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_ANON_KEY"]
+    url = st.secrets["SUPABASE_URL"]
+    key = st.secrets["SUPABASE_ANON_KEY"]
     return create_client(url, key)
+
 
 
 def fetch_page(page: int, page_size: int) -> pd.DataFrame:
@@ -333,3 +333,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
