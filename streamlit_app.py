@@ -35,14 +35,14 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = st.secrets.get("SUPABASE_WIDE_VIEW", "wide_view")
+DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view")
 PAGE_SIZE = 200
 
 
-
 def get_client():
-    url = st.secrets["SUPABASE_URL"]
-    key = st.secrets["SUPABASE_ANON_KEY"]
+    load_dotenv()
+    url = os.environ["SUPABASE_URL"]
+    key = os.environ["SUPABASE_ANON_KEY"]
     return create_client(url, key)
 
 
@@ -334,5 +334,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
