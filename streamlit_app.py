@@ -15,8 +15,8 @@ Assumptions:
 import os
 import pandas as pd
 import streamlit as st
-from supabase import create_client
 from dotenv import load_dotenv
+from supabase import create_client
 
 # Map location IDs → friendly names for column display
 LOCATION_ID_TO_NAME = {
@@ -333,6 +333,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
