@@ -147,12 +147,18 @@ def main():
 
     st.sidebar.header("🔍 Filters")
     st.sidebar.markdown("---")
-    
+
     date_range = st.sidebar.date_input(
-        "📅 Date Range", 
-        value=[],
+        "📅 Date Range",
+        value=None,  # allow empty
         help="Select a date range to filter readings"
     )
+
+# Normalize date_range into start/end dates
+    if isinstance(date_range, list) and len(date_range) == 2:
+        start_date, end_date = date_range
+    else:
+        start_date = end_date = None
     
     st.sidebar.markdown("---")
     
@@ -333,3 +339,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
