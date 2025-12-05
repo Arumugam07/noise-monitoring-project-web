@@ -38,7 +38,7 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view")
+DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
 PAGE_SIZE = 200
 
 
@@ -59,26 +59,39 @@ def get_client():
     return create_client(url, key)
 
 
-def fetch_page(page: int, page_size: int) -> pd.DataFrame:
+def fetch_page(page: int, page_size: int, start_date=None, end_date=None) -> pd.DataFrame:
+    """Fetch data with pagination and optional date filtering."""
     supabase = get_client()
     offset = page * page_size
 
-    # Try RPC for raw SQL first; fallback to simple select
     try:
-        sql = (
-            f'SELECT * FROM public.{DEFAULT_VIEW} '
-            f'ORDER BY "Date", "Time" OFFSET {offset} LIMIT {page_size}'
-        )
-        resp = supabase.rpc("exec_sql", {"sql": sql}).execute()
-        rows = resp.data or []
-        return pd.DataFrame(rows)
-    except Exception:
-        # Fallback: simple select and paginate client-side
-        resp = supabase.table(DEFAULT_VIEW).select("*").execute()
+        # Query the wide view with date filters if provided
+        query = supabase.table(DEFAULT_VIEW).select("*")
+        
+        # Add date filters to reduce data volume
+        if start_date:
+            query = query.gte("Date", str(start_date))
+        if end_date:
+            query = query.lte("Date", str(end_date))
+        
+        # Order and paginate
+        query = query.order("Date").order("Time").range(offset, offset + page_size - 1)
+        
+        resp = query.execute()
         df = pd.DataFrame(resp.data or [])
-        if df.empty:
+        
+        return df
+        
+    except Exception as e:
+        st.error(f"Error fetching from {DEFAULT_VIEW}: {e}")
+        # Fallback: try without filters
+        try:
+            resp = supabase.table(DEFAULT_VIEW).select("*").limit(page_size).execute()
+            df = pd.DataFrame(resp.data or [])
             return df
-        return df.sort_values(["Date", "Time"]).iloc[offset : offset + page_size]
+        except Exception as e2:
+            st.error(f"Fallback also failed: {e2}")
+            return pd.DataFrame()
 
 
 def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vmax):
@@ -90,7 +103,7 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
 
-    # --- Date filter ---
+    # --- Date filter (only if not already filtered in query) ---
     if start_date is not None and end_date is not None:
         df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
 
@@ -118,13 +131,12 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
     return df.rename(columns=rename)
 
 
-
 def login_gate() -> bool:
     st.sidebar.header("🔐 Authentication")
     user = st.sidebar.text_input("Username", placeholder="Enter username")
     pwd = st.sidebar.text_input("Password", type="password", placeholder="Enter password")
 
-    if st.sidebar.button("Sign in", type="primary", width="stretch"):
+    if st.sidebar.button("Sign in", type="primary", use_container_width=True):
         # Get credentials from environment variables or secrets
         valid_user = (
             os.getenv("APP_USERNAME")
@@ -158,7 +170,7 @@ def main():
         st.stop()
 
     # Logout button
-    if st.sidebar.button("🚪 Logout", width="stretch"):
+    if st.sidebar.button("🚪 Logout", use_container_width=True):
         st.session_state["auth"] = False
         st.rerun()
 
@@ -251,12 +263,12 @@ def main():
         help=f"Navigate through pages (each page shows {PAGE_SIZE} rows)",
     )
 
-    if st.sidebar.button("🔄 Refresh Data", width="stretch"):
+    if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
         st.rerun()
 
     try:
         with st.spinner("Loading data from database..."):
-            df = fetch_page(page, PAGE_SIZE)
+            df = fetch_page(page, PAGE_SIZE, start_date, end_date)
             filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
 
         if not filtered.empty:
@@ -307,14 +319,14 @@ def main():
                 styled_df = display_df.style.format(format_dict, na_rep="N/A")
                 st.dataframe(
                     styled_df,
-                    width="stretch",
+                    use_container_width=True,
                     height=600,
                     hide_index=True,
                 )
             else:
                 st.dataframe(
                     display_df,
-                    width="stretch",
+                    use_container_width=True,
                     height=600,
                     hide_index=True,
                 )
@@ -334,7 +346,7 @@ def main():
                     data=csv,
                     file_name=filename,
                     mime="text/csv",
-                    width="stretch",
+                    use_container_width=True,
                     help="Download the currently filtered and displayed data",
                 )
 
@@ -352,7 +364,7 @@ def main():
                             "vnd.openxmlformats-officedocument."
                             "spreadsheetml.sheet"
                         ),
-                        width="stretch",
+                        use_container_width=True,
                         help="Download data in Excel format (.xlsx)",
                     )
                 except Exception:
@@ -371,33 +383,44 @@ def main():
     except Exception as e:
         st.error("⚠️ Database Not Set Up or Error Connecting")
         st.info(
-            """
+            f"""
         **The database tables might not be created yet, or Supabase credentials are missing.**
 
         To set up your database:
 
         1. Go to your Supabase SQL Editor
-        2. Run this SQL:
+        2. Create the materialized view with this SQL:
+```sql
+        DROP MATERIALIZED VIEW IF EXISTS public.wide_view_mv;
 
-        ```sql
-        CREATE TABLE IF NOT EXISTS public.meter_readings (
-          location_id text NOT NULL,
-          location_name text,
-          reading_value double precision,
-          reading_datetime timestamptz NOT NULL,
-          created_at timestamptz NOT NULL DEFAULT now(),
-          CONSTRAINT meter_readings_pkey PRIMARY KEY (location_id, reading_datetime)
-        );
+        CREATE MATERIALIZED VIEW public.wide_view_mv AS
+        SELECT 
+          DATE(reading_datetime) as "Date",
+          TIME(reading_datetime) as "Time",
+          MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
+          MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
+          MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
+          MAX(CASE WHEN location_id = '14542' THEN reading_value END) as "14542",
+          MAX(CASE WHEN location_id = '15725' THEN reading_value END) as "15725",
+          MAX(CASE WHEN location_id = '16032' THEN reading_value END) as "16032",
+          MAX(CASE WHEN location_id = '16045' THEN reading_value END) as "16045",
+          MAX(CASE WHEN location_id = '15820' THEN reading_value END) as "15820",
+          MAX(CASE WHEN location_id = '15821' THEN reading_value END) as "15821",
+          MAX(CASE WHEN location_id = '15999' THEN reading_value END) as "15999",
+          MAX(CASE WHEN location_id = '16026' THEN reading_value END) as "16026",
+          MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
+          MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
+        FROM public.meter_readings
+        GROUP BY DATE(reading_datetime), TIME(reading_datetime);
 
-        CREATE INDEX IF NOT EXISTS idx_meter_readings_datetime
-        ON public.meter_readings (reading_datetime);
-        ```
+        CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
+        
+        REFRESH MATERIALIZED VIEW public.wide_view_mv;
+```
 
-        3. Then run the ETL to load data: `python supabase_daily.py`
+        3. Set environment variable: `SUPABASE_WIDE_VIEW=wide_view_mv`
 
-        4. Create the wide_view (contact admin for SQL)
-
-        5. Make sure `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set in
+        4. Make sure `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set in
            Streamlit **secrets** or environment variables.
         """
         )
@@ -406,6 +429,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-
