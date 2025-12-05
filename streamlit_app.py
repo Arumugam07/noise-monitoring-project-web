@@ -85,7 +85,10 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     if df.empty:
         return df
 
-    # Ensure Date column is datetime
+    # Work on a copy to avoid SettingWithCopyWarning
+    df = df.copy()
+
+    # Ensure Date column is date type (not datetime64 with time)
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
 
@@ -102,11 +105,14 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     # Keep selected location columns
     id_cols = [c for c in df.columns if c not in ("Date", "Time")]
     keep_ids = [lid for lid in id_cols if lid in location_ids]
-    df = df[["Date", "Time"] + keep_ids] if keep_ids else df[["Date", "Time"]]
+    if keep_ids:
+        df = df[["Date", "Time"] + keep_ids]
+    else:
+        df = df[["Date", "Time"]]
 
     # Convert selected columns to numeric (in case Supabase returns strings)
     for col in keep_ids:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
+        df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
 
     # Numeric range across selected columns
     if keep_ids and (vmin is not None or vmax is not None):
@@ -119,6 +125,7 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     # Rename to friendly names
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
+
 
 
 def login_gate() -> bool:
@@ -396,4 +403,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
