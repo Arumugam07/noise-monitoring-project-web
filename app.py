@@ -72,7 +72,7 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
         return df
 
     # Date filter
-    if date_range and len(date_range) == 2 and date_range[0] and date_range[1]:
+    if start_date is not None and end_date is not None:
         start_date, end_date = date_range
         df = df[(df["Date"] >= pd.to_datetime(start_date)) & (df["Date"] <= pd.to_datetime(end_date))]
 
@@ -339,4 +339,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
