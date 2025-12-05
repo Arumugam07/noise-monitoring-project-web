@@ -81,7 +81,8 @@ def fetch_page(page: int, page_size: int) -> pd.DataFrame:
         return df.sort_values(["Date", "Time"]).iloc[offset : offset + page_size]
 
 
-def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.DataFrame:
+# 🚨 CHANGED FUNCTION: better date handling
+def filter_frame(df: pd.DataFrame, date_value, location_ids, vmin, vmax) -> pd.DataFrame:
     if df.empty:
         return df
 
@@ -92,17 +93,27 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     if "Date" in df.columns:
         df["Date"] = pd.to_datetime(df["Date"]).dt.date
 
-    # Date filter
-    if (
-        date_range
-        and len(date_range) == 2
-        and date_range[0] is not None
-        and date_range[1] is not None
-    ):
-        start_date, end_date = date_range
+    # -------- Date filter (handles single date OR range) --------
+    start_date = end_date = None
+
+    # date_value can be:
+    # - a single datetime.date
+    # - a tuple/list of 2 dates (start, end)
+    # - (rarely) a 1-long list [date]
+    from datetime import date as DateType
+
+    if isinstance(date_value, (list, tuple)):
+        if len(date_value) == 2:
+            start_date, end_date = date_value
+        elif len(date_value) == 1:
+            start_date = end_date = date_value[0]
+    elif isinstance(date_value, DateType):
+        start_date = end_date = date_value
+
+    if start_date is not None and end_date is not None:
         df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
 
-    # Keep selected location columns
+    # -------- Keep selected location columns --------
     id_cols = [c for c in df.columns if c not in ("Date", "Time")]
     keep_ids = [lid for lid in id_cols if lid in location_ids]
     if keep_ids:
@@ -114,7 +125,7 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     for col in keep_ids:
         df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Numeric range across selected columns
+    # -------- Numeric range across selected columns --------
     if keep_ids and (vmin is not None or vmax is not None):
         for col in keep_ids:
             if vmin is not None:
@@ -125,7 +136,6 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     # Rename to friendly names
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
-
 
 
 def login_gate() -> bool:
@@ -403,5 +413,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
