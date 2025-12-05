@@ -102,16 +102,23 @@ def filter_frame(df: pd.DataFrame, date_value, location_ids, vmin, vmax) -> pd.D
     # - (rarely) a 1-long list [date]
     from datetime import date as DateType
 
-    if isinstance(date_value, (list, tuple)):
-        if len(date_value) == 2:
-            start_date, end_date = date_value
-        elif len(date_value) == 1:
-            start_date = end_date = date_value[0]
-    elif isinstance(date_value, DateType):
-        start_date = end_date = date_value
+   # Normalize to start_date, end_date
+    if isinstance(date_selection, (list, tuple)):
+        if len(date_selection) == 2:
+            start_date, end_date = date_selection
+        elif len(date_selection) == 1:
+            start_date = end_date = date_selection[0]
+        else:
+            start_date = end_date = None
+    elif isinstance(date_selection, date):
+        start_date = end_date = date_selection
+    else:
+        start_date = end_date = None
 
     if start_date is not None and end_date is not None:
         df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
+
+
 
     # -------- Keep selected location columns --------
     id_cols = [c for c in df.columns if c not in ("Date", "Time")]
@@ -209,10 +216,9 @@ def main():
     today = date.today()
     default_start = today - timedelta(days=7)
 
-    date_range = st.sidebar.date_input(
+    date_selection = st.sidebar.date_input(
         "📅 Date Range",
-        value=(default_start, today),
-        help="Select a date range to filter readings",
+        value=(default_start, today)
     )
 
     st.sidebar.markdown("---")
@@ -413,3 +419,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
