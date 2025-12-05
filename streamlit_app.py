@@ -257,7 +257,7 @@ def main():
     try:
         with st.spinner("Loading data from database..."):
             df = fetch_page(page, PAGE_SIZE)
-            filtered = filter_frame(df, date_range, selected_ids, vmin, vmax)
+            filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
 
         if not filtered.empty:
             # Display summary statistics
@@ -406,5 +406,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
