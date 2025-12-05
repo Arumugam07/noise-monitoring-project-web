@@ -126,7 +126,7 @@ def login_gate() -> bool:
     user = st.sidebar.text_input("Username", placeholder="Enter username")
     pwd = st.sidebar.text_input("Password", type="password", placeholder="Enter password")
 
-    if st.sidebar.button("Sign in", type="primary", use_container_width=True):
+    if st.sidebar.button("Sign in", type="primary", width="stretch"):
         # Get credentials from environment variables or secrets
         valid_user = (
             os.getenv("APP_USERNAME")
@@ -160,7 +160,7 @@ def main():
         st.stop()
 
     # Logout button
-    if st.sidebar.button("🚪 Logout", use_container_width=True):
+    if st.sidebar.button("🚪 Logout", width="stretch"):
         st.session_state["auth"] = False
         st.rerun()
 
@@ -241,7 +241,7 @@ def main():
         help=f"Navigate through pages (each page shows {PAGE_SIZE} rows)",
     )
 
-    if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+    if st.sidebar.button("🔄 Refresh Data", width="stretch"):
         st.rerun()
 
     try:
@@ -297,14 +297,14 @@ def main():
                 styled_df = display_df.style.format(format_dict, na_rep="N/A")
                 st.dataframe(
                     styled_df,
-                    use_container_width=True,
+                    width="stretch",
                     height=600,
                     hide_index=True,
                 )
             else:
                 st.dataframe(
                     display_df,
-                    use_container_width=True,
+                    width="stretch",
                     height=600,
                     hide_index=True,
                 )
@@ -324,7 +324,7 @@ def main():
                     data=csv,
                     file_name=filename,
                     mime="text/csv",
-                    use_container_width=True,
+                    width="stretch",
                     help="Download the currently filtered and displayed data",
                 )
 
@@ -342,7 +342,7 @@ def main():
                             "vnd.openxmlformats-officedocument."
                             "spreadsheetml.sheet"
                         ),
-                        use_container_width=True,
+                        width="stretch",
                         help="Download data in Excel format (.xlsx)",
                     )
                 except Exception:
@@ -396,3 +396,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
