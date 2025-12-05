@@ -13,10 +13,14 @@ Assumptions:
 """
 
 import os
+import io
+from datetime import date as DateType
+
 import pandas as pd
 import streamlit as st
 from supabase import create_client
 from dotenv import load_dotenv
+
 
 # Map location IDs → friendly names for column display
 LOCATION_ID_TO_NAME = {
@@ -67,21 +71,54 @@ def fetch_page(page: int, page_size: int) -> pd.DataFrame:
         return df.sort_values(["Date", "Time"]).iloc[offset: offset + page_size]
 
 
-def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.DataFrame:
+def filter_frame(
+    df: pd.DataFrame,
+    date_input_value,
+    location_ids,
+    vmin,
+    vmax,
+) -> pd.DataFrame:
+    """Apply date, location & numeric filters, then rename columns."""
     if df.empty:
         return df
 
-    # Date filter
-    if start_date is not None and end_date is not None:
-        start_date, end_date = date_range
-        df = df[(df["Date"] >= pd.to_datetime(start_date)) & (df["Date"] <= pd.to_datetime(end_date))]
+    df = df.copy()
 
-    # Keep selected location columns
+    # Ensure Date is date type (strip time if present)
+    if "Date" in df.columns:
+        df["Date"] = pd.to_datetime(df["Date"]).dt.date
+
+    # --- Date filter ---
+    start_date = end_date = None
+
+    # date_input_value can be:
+    # - a single date
+    # - a tuple/list of 2 dates (start, end)
+    if isinstance(date_input_value, (list, tuple)):
+        if len(date_input_value) == 2:
+            start_date, end_date = date_input_value
+        elif len(date_input_value) == 1:
+            start_date = end_date = date_input_value[0]
+    elif isinstance(date_input_value, DateType):
+        start_date = end_date = date_input_value
+
+    if start_date is not None and end_date is not None:
+        df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
+
+    # --- Location columns filter ---
     id_cols = [c for c in df.columns if c not in ("Date", "Time")]
     keep_ids = [lid for lid in id_cols if lid in location_ids]
-    df = df[["Date", "Time"] + keep_ids]
 
-    # Numeric range across selected columns
+    if keep_ids:
+        df = df[["Date", "Time"] + keep_ids]
+    else:
+        df = df[["Date", "Time"]]
+
+    # Convert selected columns to numeric (Supabase might send strings)
+    for col in keep_ids:
+        df.loc[:, col] = pd.to_numeric(df[col], errors="coerce")
+
+    # --- Numeric range filter across selected columns ---
     if keep_ids and (vmin is not None or vmax is not None):
         for col in keep_ids:
             if vmin is not None:
@@ -92,6 +129,7 @@ def filter_frame(df: pd.DataFrame, date_range, location_ids, vmin, vmax) -> pd.D
     # Rename to friendly names
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
+
 
 
 def login_gate() -> bool:
@@ -150,15 +188,25 @@ def main():
 
     date_range = st.sidebar.date_input(
         "📅 Date Range",
-        value=None,  # allow empty
-        help="Select a date range to filter readings"
+        help="Select a single date or a date range to filter readings",
     )
+    
+    # Normalize input date (single date OR range)
+    start_date = end_date = None
+    
+    if isinstance(date_range, (list, tuple)):
+        if len(date_range) == 2:
+            start_date, end_date = date_range
+        elif len(date_range) == 1:
+            start_date = end_date = date_range[0]
+    
+    elif isinstance(date_range, DateType):
+        start_date = end_date = date_range
 
-# Normalize date_range into start/end dates
-    if isinstance(date_range, list) and len(date_range) == 2:
-        start_date, end_date = date_range
-    else:
-        start_date = end_date = None
+
+
+
+
     
     st.sidebar.markdown("---")
     
@@ -339,5 +387,6 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
