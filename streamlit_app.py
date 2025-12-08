@@ -453,8 +453,22 @@ def main():
                     latest_time = f"{latest_row['Date']} {latest_row['Time']}"
                     st.info(f"📅 Last updated: **{latest_time}**")
                 
+                # Check if any value filters are active
+                value_filter_active = (vmin is not None) or (vmax is not None)
+                
                 # Create cards for each location
                 location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
+                
+                # Track offline stations (only when NO value filters are active)
+                offline_stations = []
+                if not value_filter_active:
+                    for loc in location_cols:
+                        if loc in latest_row.index and pd.isna(latest_row[loc]):
+                            offline_stations.append(loc)
+                
+                # Show offline alert if any stations are down
+                if offline_stations and not value_filter_active:
+                    st.error(f"⚠️ **{len(offline_stations)} Station(s) Offline** - No recent data received")
                 
                 # Display in rows of 3 cards
                 for i in range(0, len(location_cols), 3):
@@ -487,19 +501,44 @@ def main():
                                     )
                             else:
                                 with col_obj:
-                                    st.markdown(
-                                        f"""
-                                        <div class="latest-reading-card" style="border-left-color: #6c757d;">
-                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                📍 {loc}
+                                    # Different display based on whether filters are active
+                                    if value_filter_active:
+                                        # With filters: just show "No Data" (filtered out)
+                                        st.markdown(
+                                            f"""
+                                            <div class="latest-reading-card" style="border-left-color: #6c757d;">
+                                                <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                    📍 {loc}
+                                                </div>
+                                                <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
+                                                    No Data
+                                                </div>
+                                                <div style="font-size: 0.85rem; color: #666;">
+                                                    Outside filter range
+                                                </div>
                                             </div>
-                                            <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
-                                                No Data
+                                            """,
+                                            unsafe_allow_html=True
+                                        )
+                                    else:
+                                        # No filters: show as OFFLINE with warning
+                                        st.markdown(
+                                            f"""
+                                            <div class="latest-reading-card" style="border-left-color: #dc3545; background-color: #fff5f5;">
+                                                <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                    📍 {loc}
+                                                </div>
+                                                <div style="font-size: 2rem; font-weight: bold; color: #dc3545; margin: 0.5rem 0;">
+                                                    ⚠️ OFFLINE
+                                                </div>
+                                                <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
+                                                     background-color: #dc3545; color: white; font-size: 0.85rem; font-weight: 600;">
+                                                    Station Down
+                                                </div>
                                             </div>
-                                        </div>
-                                        """,
-                                        unsafe_allow_html=True
-                                    )
+                                            """,
+                                            unsafe_allow_html=True
+                                        )
             
             st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
