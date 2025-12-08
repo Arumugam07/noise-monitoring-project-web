@@ -459,6 +459,15 @@ def main():
                 # Create cards for each location
                 location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
                 
+                # Calculate counts for each location when filters are active
+                location_counts = {}
+                if value_filter_active:
+                    for loc in location_cols:
+                        if loc in filtered.columns:
+                            # Count non-NA values (these are the ones within filter range)
+                            count = filtered[loc].notna().sum()
+                            location_counts[loc] = count
+                
                 # Track offline stations (only when NO value filters are active)
                 offline_stations = []
                 if not value_filter_active:
@@ -481,6 +490,16 @@ def main():
                                 color = get_noise_color(value)
                                 category = get_noise_category(value)
                                 
+                                # Get count if filters are active
+                                count_display = ""
+                                if value_filter_active and loc in location_counts:
+                                    count = location_counts[loc]
+                                    count_display = f"""
+                                        <div style="font-size: 0.85rem; color: #666; margin-top: 0.5rem;">
+                                            📊 {count} reading{"s" if count != 1 else ""} in range
+                                        </div>
+                                    """
+                                
                                 with col_obj:
                                     st.markdown(
                                         f"""
@@ -495,6 +514,7 @@ def main():
                                                  background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
                                                 {category}
                                             </div>
+                                            {count_display}
                                         </div>
                                         """,
                                         unsafe_allow_html=True
@@ -503,23 +523,45 @@ def main():
                                 with col_obj:
                                     # Different display based on whether filters are active
                                     if value_filter_active:
-                                        # With filters: just show "No Data" (filtered out)
-                                        st.markdown(
-                                            f"""
-                                            <div class="latest-reading-card" style="border-left-color: #6c757d;">
-                                                <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                    📍 {loc}
+                                        # Get count even if latest is NA
+                                        count = location_counts.get(loc, 0)
+                                        
+                                        if count > 0:
+                                            # Has data in filter range, but not the latest reading
+                                            st.markdown(
+                                                f"""
+                                                <div class="latest-reading-card" style="border-left-color: #6c757d;">
+                                                    <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                        📍 {loc}
+                                                    </div>
+                                                    <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
+                                                        Latest: N/A
+                                                    </div>
+                                                    <div style="font-size: 0.85rem; color: #666; margin-top: 0.5rem;">
+                                                        📊 {count} reading{"s" if count != 1 else ""} in range
+                                                    </div>
                                                 </div>
-                                                <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
-                                                    No Data
+                                                """,
+                                                unsafe_allow_html=True
+                                            )
+                                        else:
+                                            # No data in filter range at all
+                                            st.markdown(
+                                                f"""
+                                                <div class="latest-reading-card" style="border-left-color: #6c757d;">
+                                                    <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                        📍 {loc}
+                                                    </div>
+                                                    <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
+                                                        No Data
+                                                    </div>
+                                                    <div style="font-size: 0.85rem; color: #666;">
+                                                        📊 0 readings in range
+                                                    </div>
                                                 </div>
-                                                <div style="font-size: 0.85rem; color: #666;">
-                                                    Outside filter range
-                                                </div>
-                                            </div>
-                                            """,
-                                            unsafe_allow_html=True
-                                        )
+                                                """,
+                                                unsafe_allow_html=True
+                                            )
                                     else:
                                         # No filters: show as OFFLINE with warning
                                         st.markdown(
