@@ -441,11 +441,83 @@ def main():
                 filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
 
         if not filtered.empty:
-            # === LATEST READINGS SECTION ===
-            st.markdown("### 🔴 Latest Readings")
-            st.caption("Most recent noise levels from selected monitoring stations")
+            # Check if any value filters are active
+            value_filter_active = (vmin is not None) or (vmax is not None)
             
-            if not filtered.empty:
+            if value_filter_active:
+                # === FILTER RESULTS SECTION ===
+                st.markdown("### 🔍 Filter Results")
+                st.caption("Number of readings found for each location within your filter criteria")
+                
+                # Display filter info
+                filter_info = []
+                if vmin is not None:
+                    filter_info.append(f"Min: {vmin} dB")
+                if vmax is not None:
+                    filter_info.append(f"Max: {vmax} dB")
+                st.info(f"📊 Filter Range: **{' | '.join(filter_info)}**")
+                
+                # Create cards for each location
+                location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
+                
+                # Calculate counts for each location
+                location_counts = {}
+                for loc in location_cols:
+                    if loc in filtered.columns:
+                        count = filtered[loc].notna().sum()
+                        location_counts[loc] = count
+                
+                # Sort locations by count (highest first)
+                sorted_locations = sorted(location_counts.items(), key=lambda x: x[1], reverse=True)
+                
+                # Display in rows of 3 cards
+                for i in range(0, len(sorted_locations), 3):
+                    cols = st.columns(3)
+                    for j, col_obj in enumerate(cols):
+                        if i + j < len(sorted_locations):
+                            loc, count = sorted_locations[i + j]
+                            
+                            # Color based on count (gradient from green to red)
+                            if count == 0:
+                                color = "#6c757d"  # Gray
+                                intensity = "None"
+                            elif count < 10:
+                                color = "#28a745"  # Green
+                                intensity = "Low"
+                            elif count < 50:
+                                color = "#ffc107"  # Yellow
+                                intensity = "Medium"
+                            elif count < 100:
+                                color = "#fd7e14"  # Orange
+                                intensity = "High"
+                            else:
+                                color = "#dc3545"  # Red
+                                intensity = "Very High"
+                            
+                            with col_obj:
+                                st.markdown(
+                                    f"""
+                                    <div class="latest-reading-card" style="border-left-color: {color};">
+                                        <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                            📍 {loc}
+                                        </div>
+                                        <div style="font-size: 2.5rem; font-weight: bold; color: {color}; margin: 0.5rem 0;">
+                                            {count} <span style="font-size: 1.2rem;">times</span>
+                                        </div>
+                                        <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
+                                             background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
+                                            {intensity} Frequency
+                                        </div>
+                                    </div>
+                                    """,
+                                    unsafe_allow_html=True
+                                )
+                
+            else:
+                # === LATEST READINGS SECTION (No Filters) ===
+                st.markdown("### 🔴 Latest Readings")
+                st.caption("Most recent noise levels from selected monitoring stations")
+                
                 latest_row = filtered.iloc[0]  # First row is most recent due to desc order
                 
                 # Display latest reading time
@@ -453,30 +525,17 @@ def main():
                     latest_time = f"{latest_row['Date']} {latest_row['Time']}"
                     st.info(f"📅 Last updated: **{latest_time}**")
                 
-                # Check if any value filters are active
-                value_filter_active = (vmin is not None) or (vmax is not None)
-                
                 # Create cards for each location
                 location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
                 
-                # Calculate counts for each location when filters are active
-                location_counts = {}
-                if value_filter_active:
-                    for loc in location_cols:
-                        if loc in filtered.columns:
-                            # Count non-NA values (these are the ones within filter range)
-                            count = filtered[loc].notna().sum()
-                            location_counts[loc] = count
-                
-                # Track offline stations (only when NO value filters are active)
+                # Track offline stations
                 offline_stations = []
-                if not value_filter_active:
-                    for loc in location_cols:
-                        if loc in latest_row.index and pd.isna(latest_row[loc]):
-                            offline_stations.append(loc)
+                for loc in location_cols:
+                    if loc in latest_row.index and pd.isna(latest_row[loc]):
+                        offline_stations.append(loc)
                 
                 # Show offline alert if any stations are down
-                if offline_stations and not value_filter_active:
+                if offline_stations:
                     st.error(f"⚠️ **{len(offline_stations)} Station(s) Offline** - No recent data received")
                 
                 # Display in rows of 3 cards
@@ -489,16 +548,6 @@ def main():
                                 value = latest_row[loc]
                                 color = get_noise_color(value)
                                 category = get_noise_category(value)
-                                
-                                # Get count if filters are active
-                                count_display = ""
-                                if value_filter_active and loc in location_counts:
-                                    count = location_counts[loc]
-                                    count_display = f"""
-                                        <div style="font-size: 0.85rem; color: #666; margin-top: 0.5rem;">
-                                            📊 {count} reading{"s" if count != 1 else ""} in range
-                                        </div>
-                                    """
                                 
                                 with col_obj:
                                     st.markdown(
@@ -514,73 +563,30 @@ def main():
                                                  background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
                                                 {category}
                                             </div>
-                                            {count_display}
                                         </div>
                                         """,
                                         unsafe_allow_html=True
                                     )
                             else:
                                 with col_obj:
-                                    # Different display based on whether filters are active
-                                    if value_filter_active:
-                                        # Get count even if latest is NA
-                                        count = location_counts.get(loc, 0)
-                                        
-                                        if count > 0:
-                                            # Has data in filter range, but not the latest reading
-                                            st.markdown(
-                                                f"""
-                                                <div class="latest-reading-card" style="border-left-color: #6c757d;">
-                                                    <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                        📍 {loc}
-                                                    </div>
-                                                    <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
-                                                        Latest: N/A
-                                                    </div>
-                                                    <div style="font-size: 0.85rem; color: #666; margin-top: 0.5rem;">
-                                                        📊 {count} reading{"s" if count != 1 else ""} in range
-                                                    </div>
-                                                </div>
-                                                """,
-                                                unsafe_allow_html=True
-                                            )
-                                        else:
-                                            # No data in filter range at all
-                                            st.markdown(
-                                                f"""
-                                                <div class="latest-reading-card" style="border-left-color: #6c757d;">
-                                                    <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                        📍 {loc}
-                                                    </div>
-                                                    <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
-                                                        No Data
-                                                    </div>
-                                                    <div style="font-size: 0.85rem; color: #666;">
-                                                        📊 0 readings in range
-                                                    </div>
-                                                </div>
-                                                """,
-                                                unsafe_allow_html=True
-                                            )
-                                    else:
-                                        # No filters: show as OFFLINE with warning
-                                        st.markdown(
-                                            f"""
-                                            <div class="latest-reading-card" style="border-left-color: #dc3545; background-color: #fff5f5;">
-                                                <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                    📍 {loc}
-                                                </div>
-                                                <div style="font-size: 2rem; font-weight: bold; color: #dc3545; margin: 0.5rem 0;">
-                                                    ⚠️ OFFLINE
-                                                </div>
-                                                <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
-                                                     background-color: #dc3545; color: white; font-size: 0.85rem; font-weight: 600;">
-                                                    Station Down
-                                                </div>
+                                    # Show as OFFLINE with warning
+                                    st.markdown(
+                                        f"""
+                                        <div class="latest-reading-card" style="border-left-color: #dc3545; background-color: #fff5f5;">
+                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                📍 {loc}
                                             </div>
-                                            """,
-                                            unsafe_allow_html=True
-                                        )
+                                            <div style="font-size: 2rem; font-weight: bold; color: #dc3545; margin: 0.5rem 0;">
+                                                ⚠️ OFFLINE
+                                            </div>
+                                            <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
+                                                 background-color: #dc3545; color: white; font-size: 0.85rem; font-weight: 600;">
+                                                Station Down
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
             
             st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
