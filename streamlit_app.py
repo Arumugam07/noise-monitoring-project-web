@@ -144,12 +144,20 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
     # --- Numeric filters ---
+    # Keep rows where ANY location column meets the criteria
     if keep_ids and (vmin is not None or vmax is not None):
+        # Create a mask for rows that have at least one valid reading in the range
+        mask = pd.Series([False] * len(df), index=df.index)
+        
         for col in keep_ids:
+            col_mask = df[col].notna()  # Column has a value
             if vmin is not None:
-                df = df[(df[col].isna()) | (df[col] >= vmin)]
+                col_mask = col_mask & (df[col] >= vmin)
             if vmax is not None:
-                df = df[(df[col].isna()) | (df[col] <= vmax)]
+                col_mask = col_mask & (df[col] <= vmax)
+            mask = mask | col_mask  # Keep row if ANY column matches
+        
+        df = df[mask]
 
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
