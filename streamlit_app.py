@@ -2,14 +2,10 @@
 """
 Streamlit app: Simple login + interactive table over Supabase wide view.
 
-- Login gate (single username/password)
-- Filters: Date range, location columns, numeric range
-- Pagination and vertical scrolling
-
-Assumptions:
-- A wide view exists in Supabase: `public.wide_view` (or materialized `wide_view_mv`).
-- Columns: Date (date), Time (time), and one column per location_id as strings.
-- We map location IDs to English names for display.
+Enhanced with:
+- Latest readings display
+- Improved visual design
+- Better UX and formatting
 """
 
 import os
@@ -40,6 +36,34 @@ LOCATION_ID_TO_NAME = {
 
 DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
 PAGE_SIZE = 200
+
+
+def get_noise_color(value):
+    """Get color for noise level."""
+    if pd.isna(value):
+        return "#6c757d"  # Gray
+    if value < 50:
+        return "#28a745"  # Green - Quiet
+    elif value < 70:
+        return "#ffc107"  # Yellow - Moderate
+    elif value < 85:
+        return "#fd7e14"  # Orange - Loud
+    else:
+        return "#dc3545"  # Red - Very Loud
+
+
+def get_noise_category(value):
+    """Categorize noise level."""
+    if pd.isna(value):
+        return "N/A"
+    if value < 50:
+        return "Quiet"
+    elif value < 70:
+        return "Moderate"
+    elif value < 85:
+        return "Loud"
+    else:
+        return "Very Loud"
 
 
 def get_client():
@@ -75,7 +99,7 @@ def fetch_page(page: int, page_size: int, start_date=None, end_date=None) -> pd.
             query = query.lte("Date", str(end_date))
         
         # Order and paginate
-        query = query.order("Date").order("Time").range(offset, offset + page_size - 1)
+        query = query.order("Date", desc=True).order("Time", desc=True).range(offset, offset + page_size - 1)
         
         resp = query.execute()
         df = pd.DataFrame(resp.data or [])
@@ -162,10 +186,60 @@ def login_gate() -> bool:
 
 def main():
     st.set_page_config(page_title="Noise Monitoring System", layout="wide", page_icon="🔊")
-    st.title("🔊 Noise Monitoring System")
-    st.caption("Real-time noise level monitoring across multiple locations in Singapore")
 
+    # Custom CSS for better styling
+    st.markdown("""
+        <style>
+        .main-header {
+            font-size: 2.5rem;
+            font-weight: 700;
+            color: #1f77b4;
+            margin-bottom: 0.5rem;
+        }
+        .sub-header {
+            font-size: 1.1rem;
+            color: #666;
+            margin-bottom: 2rem;
+        }
+        .metric-card {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 1.5rem;
+            border-radius: 10px;
+            color: white;
+            text-align: center;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .latest-reading-card {
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+            border-left: 5px solid;
+            background-color: #f8f9fa;
+            transition: transform 0.2s;
+        }
+        .latest-reading-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0,0,0,0.15);
+        }
+        .section-divider {
+            margin: 2rem 0;
+            border-top: 2px solid #e9ecef;
+        }
+        .info-badge {
+            display: inline-block;
+            padding: 0.25rem 0.75rem;
+            border-radius: 12px;
+            font-size: 0.85rem;
+            font-weight: 600;
+            margin-left: 0.5rem;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # Login gate
     if not login_gate():
+        st.markdown('<div class="main-header">🔊 Noise Monitoring System</div>', unsafe_allow_html=True)
+        st.markdown('<div class="sub-header">Real-time noise level monitoring across multiple locations in Singapore</div>', unsafe_allow_html=True)
         st.info("👆 Please log in using the sidebar to continue.")
         st.stop()
 
@@ -187,7 +261,14 @@ def main():
         - Data is organized by date, time, and location
         - Values represent noise levels in dB
         
+        **Noise Level Guide:**
+        - 🟢 **Quiet** (< 50 dB): Library, whisper
+        - 🟡 **Moderate** (50-70 dB): Normal conversation
+        - 🟠 **Loud** (70-85 dB): Traffic, alarm clock
+        - 🔴 **Very Loud** (> 85 dB): Heavy traffic, machinery
+        
         **Features:**
+        - View latest readings from all locations
         - Filter by date range and locations
         - Filter by noise level range
         - Export data as CSV or Excel
@@ -204,7 +285,8 @@ def main():
 
     date_selection = st.sidebar.date_input(
         "📅 Date Range",
-        value=(default_start, today)
+        value=(default_start, today),
+        help="Select the date range for data display"
     )
     
     # Normalize
@@ -266,18 +348,90 @@ def main():
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
         st.rerun()
 
+    # Main content
+    st.markdown('<div class="main-header">🔊 Noise Monitoring System</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Real-time noise level monitoring across multiple locations in Singapore</div>', unsafe_allow_html=True)
+
     try:
         with st.spinner("Loading data from database..."):
             df = fetch_page(page, PAGE_SIZE, start_date, end_date)
             filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
 
         if not filtered.empty:
-            # Display summary statistics
+            # === LATEST READINGS SECTION ===
+            st.markdown("### 🔴 Latest Readings")
+            st.caption("Most recent noise levels from selected monitoring stations")
+            
+            if not filtered.empty:
+                latest_row = filtered.iloc[0]  # First row is most recent due to desc order
+                
+                # Display latest reading time
+                if "Date" in latest_row.index and "Time" in latest_row.index:
+                    latest_time = f"{latest_row['Date']} {latest_row['Time']}"
+                    st.info(f"📅 Last updated: **{latest_time}**")
+                
+                # Create cards for each location
+                location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
+                
+                # Display in rows of 3 cards
+                for i in range(0, len(location_cols), 3):
+                    cols = st.columns(3)
+                    for j, col_obj in enumerate(cols):
+                        if i + j < len(location_cols):
+                            loc = location_cols[i + j]
+                            if loc in latest_row.index and not pd.isna(latest_row[loc]):
+                                value = latest_row[loc]
+                                color = get_noise_color(value)
+                                category = get_noise_category(value)
+                                
+                                with col_obj:
+                                    st.markdown(
+                                        f"""
+                                        <div class="latest-reading-card" style="border-left-color: {color};">
+                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                📍 {loc}
+                                            </div>
+                                            <div style="font-size: 2.5rem; font-weight: bold; color: {color}; margin: 0.5rem 0;">
+                                                {value:.1f} <span style="font-size: 1.2rem;">dB</span>
+                                            </div>
+                                            <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
+                                                 background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
+                                                {category}
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
+                            else:
+                                with col_obj:
+                                    st.markdown(
+                                        f"""
+                                        <div class="latest-reading-card" style="border-left-color: #6c757d;">
+                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
+                                                📍 {loc}
+                                            </div>
+                                            <div style="font-size: 1.5rem; color: #999; margin: 1rem 0;">
+                                                No Data
+                                            </div>
+                                        </div>
+                                        """,
+                                        unsafe_allow_html=True
+                                    )
+            
+            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+            # === SUMMARY STATISTICS ===
             st.markdown("### 📊 Summary Statistics")
+            st.caption("Overview of the current data selection")
+            
             col1, col2, col3, col4 = st.columns(4)
 
             with col1:
-                st.metric("Total Records", len(filtered))
+                st.metric(
+                    label="Total Records",
+                    value=f"{len(filtered):,}",
+                    help="Total number of readings in current view"
+                )
 
             # Calculate statistics for numeric columns (location columns)
             numeric_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
@@ -289,19 +443,35 @@ def main():
                 if all_values:
                     avg_val = sum(all_values) / len(all_values)
                     with col2:
-                        st.metric("Average Reading", f"{avg_val:.2f} dB")
+                        st.metric(
+                            label="Average Reading",
+                            value=f"{avg_val:.1f} dB",
+                            help="Mean noise level across all locations and times"
+                        )
                     with col3:
-                        st.metric("Min Reading", f"{min(all_values):.2f} dB")
+                        st.metric(
+                            label="Min Reading",
+                            value=f"{min(all_values):.1f} dB",
+                            help="Lowest noise level recorded",
+                            delta=None,
+                            delta_color="inverse"
+                        )
                     with col4:
-                        st.metric("Max Reading", f"{max(all_values):.2f} dB")
+                        st.metric(
+                            label="Max Reading",
+                            value=f"{max(all_values):.1f} dB",
+                            help="Highest noise level recorded",
+                            delta=None,
+                            delta_color="normal"
+                        )
 
-            st.divider()
+            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-            # Display the data table with enhanced formatting
-            st.markdown("### 📋 Data Table")
+            # === DATA TABLE ===
+            st.markdown("### 📋 Detailed Data Table")
             st.caption(
-                f"Showing {len(filtered)} rows (page {page + 1}, page size {PAGE_SIZE}). "
-                "Use filters in the sidebar to refine results."
+                f"Showing **{len(filtered)}** rows from page **{page + 1}** (page size: {PAGE_SIZE}). "
+                "Sorted by most recent readings first."
             )
 
             display_df = filtered.copy()
@@ -312,11 +482,13 @@ def main():
             if "Time" in display_df.columns:
                 display_df["Time"] = display_df["Time"].astype(str)
 
+            # Format numeric columns
             format_dict = {
                 col: "{:.2f}" for col in numeric_cols if col in display_df.columns
             }
+            
             if format_dict:
-                styled_df = display_df.style.format(format_dict, na_rep="N/A")
+                styled_df = display_df.style.format(format_dict, na_rep="—")
                 st.dataframe(
                     styled_df,
                     use_container_width=True,
@@ -331,9 +503,10 @@ def main():
                     hide_index=True,
                 )
 
-            # Enhanced download functionality
-            st.divider()
+            # === EXPORT SECTION ===
+            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
             st.markdown("### 📥 Export Data")
+            st.caption("Download the current filtered dataset in your preferred format")
 
             col_dl1, col_dl2 = st.columns(2)
 
@@ -342,12 +515,12 @@ def main():
                 timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
                 filename = f"noise_readings_{timestamp}.csv"
                 st.download_button(
-                    label="📥 Download Current View (CSV)",
+                    label="📄 Download as CSV",
                     data=csv,
                     file_name=filename,
                     mime="text/csv",
                     use_container_width=True,
-                    help="Download the currently filtered and displayed data",
+                    help="Download the currently filtered and displayed data in CSV format",
                 )
 
             with col_dl2:
@@ -365,66 +538,74 @@ def main():
                             "spreadsheetml.sheet"
                         ),
                         use_container_width=True,
-                        help="Download data in Excel format (.xlsx)",
+                        help="Download data in Excel format (.xlsx) for advanced analysis",
                     )
                 except Exception:
-                    st.info("💡 Excel export temporarily unavailable")
+                    st.info("💡 Excel export temporarily unavailable. Please use CSV format.")
         else:
             st.warning("⚠️ No data found matching your filters.")
             st.info(
                 """
-            💡 Try adjusting:
-            - **Date Range**: Select a wider date range
-            - **Locations**: Select different or all locations
-            - **Value Range**: Adjust or remove min/max value filters
-            - **Page Number**: Try page 0 or check if data exists
+            ### 💡 Suggestions:
+            - **Expand Date Range**: Try selecting a wider date range
+            - **Check Locations**: Ensure you have selected at least one location
+            - **Adjust Value Filters**: Remove or modify min/max value constraints
+            - **Reset Page**: Navigate back to page 0
+            - **Verify Data**: Ensure data exists in the database for the selected period
             """
             )
     except Exception as e:
-        st.error("⚠️ Database Not Set Up or Error Connecting")
-        st.info(
-            f"""
-        **The database tables might not be created yet, or Supabase credentials are missing.**
-
-        To set up your database:
-
-        1. Go to your Supabase SQL Editor
-        2. Create the materialized view with this SQL:
-```sql
-        DROP MATERIALIZED VIEW IF EXISTS public.wide_view_mv;
-
-        CREATE MATERIALIZED VIEW public.wide_view_mv AS
-        SELECT 
-          DATE(reading_datetime) as "Date",
-          TIME(reading_datetime) as "Time",
-          MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
-          MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
-          MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
-          MAX(CASE WHEN location_id = '14542' THEN reading_value END) as "14542",
-          MAX(CASE WHEN location_id = '15725' THEN reading_value END) as "15725",
-          MAX(CASE WHEN location_id = '16032' THEN reading_value END) as "16032",
-          MAX(CASE WHEN location_id = '16045' THEN reading_value END) as "16045",
-          MAX(CASE WHEN location_id = '15820' THEN reading_value END) as "15820",
-          MAX(CASE WHEN location_id = '15821' THEN reading_value END) as "15821",
-          MAX(CASE WHEN location_id = '15999' THEN reading_value END) as "15999",
-          MAX(CASE WHEN location_id = '16026' THEN reading_value END) as "16026",
-          MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
-          MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
-        FROM public.meter_readings
-        GROUP BY DATE(reading_datetime), TIME(reading_datetime);
-
-        CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
+        st.error("⚠️ Database Connection Error")
         
-        REFRESH MATERIALIZED VIEW public.wide_view_mv;
-```
+        with st.expander("🔧 Setup Instructions", expanded=True):
+            st.markdown(
+                """
+            **The database might not be configured yet, or credentials are missing.**
 
-        3. Set environment variable: `SUPABASE_WIDE_VIEW=wide_view_mv`
+            ### Setup Steps:
 
-        4. Make sure `SUPABASE_URL` and `SUPABASE_ANON_KEY` are set in
-           Streamlit **secrets** or environment variables.
-        """
-        )
-        st.error(f"Technical error: {str(e)}")
+            1. **Create the materialized view** in your Supabase SQL Editor:
+            
+            ```sql
+            DROP MATERIALIZED VIEW IF EXISTS public.wide_view_mv;
+
+            CREATE MATERIALIZED VIEW public.wide_view_mv AS
+            SELECT 
+              DATE(reading_datetime) as "Date",
+              TIME(reading_datetime) as "Time",
+              MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
+              MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
+              MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
+              MAX(CASE WHEN location_id = '14542' THEN reading_value END) as "14542",
+              MAX(CASE WHEN location_id = '15725' THEN reading_value END) as "15725",
+              MAX(CASE WHEN location_id = '16032' THEN reading_value END) as "16032",
+              MAX(CASE WHEN location_id = '16045' THEN reading_value END) as "16045",
+              MAX(CASE WHEN location_id = '15820' THEN reading_value END) as "15820",
+              MAX(CASE WHEN location_id = '15821' THEN reading_value END) as "15821",
+              MAX(CASE WHEN location_id = '15999' THEN reading_value END) as "15999",
+              MAX(CASE WHEN location_id = '16026' THEN reading_value END) as "16026",
+              MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
+              MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
+            FROM public.meter_readings
+            GROUP BY DATE(reading_datetime), TIME(reading_datetime);
+
+            CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
+            
+            REFRESH MATERIALIZED VIEW public.wide_view_mv;
+            ```
+
+            2. **Set environment variables** or Streamlit secrets:
+               - `SUPABASE_URL`: Your Supabase project URL
+               - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
+               - `SUPABASE_WIDE_VIEW=wide_view_mv`
+               - `APP_USERNAME`: Login username (default: admin)
+               - `APP_PASSWORD`: Login password (default: changeme)
+
+            3. **Refresh** this page after configuration
+            """
+            )
+        
+        st.error(f"**Technical Error:** {str(e)}")
 
 
 if __name__ == "__main__":
