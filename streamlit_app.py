@@ -131,7 +131,7 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
     if start_date is not None and end_date is not None:
         df = df[(df["Date"] >= start_date) & (df["Date"] <= end_date)]
 
-    # --- Keep selected location columns ---
+    # --- Keep selected location columns FIRST ---
     id_cols = [c for c in df.columns if c not in ("Date", "Time")]
     keep_ids = [lid for lid in id_cols if lid in location_ids]
 
@@ -140,13 +140,14 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
     else:
         df = df[["Date", "Time"]]
 
+    # Convert to numeric BEFORE filtering
     for col in keep_ids:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # --- Numeric filters ---
-    # Keep rows where ANY location column meets the criteria
+    # --- Numeric filters: Apply ONLY to selected location columns ---
     if keep_ids and (vmin is not None or vmax is not None):
         # Create a mask for rows that have at least one valid reading in the range
+        # among the SELECTED locations only
         mask = pd.Series([False] * len(df), index=df.index)
         
         for col in keep_ids:
@@ -155,9 +156,18 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
                 col_mask = col_mask & (df[col] >= vmin)
             if vmax is not None:
                 col_mask = col_mask & (df[col] <= vmax)
-            mask = mask | col_mask  # Keep row if ANY column matches
+            mask = mask | col_mask  # Keep row if ANY selected column matches
         
         df = df[mask]
+        
+        # Now filter individual cell values: set values outside range to NaN
+        # This ensures the table only shows values within the range
+        if not df.empty:
+            for col in keep_ids:
+                if vmin is not None:
+                    df.loc[df[col] < vmin, col] = pd.NA
+                if vmax is not None:
+                    df.loc[df[col] > vmax, col] = pd.NA
 
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
