@@ -83,6 +83,43 @@ def get_client():
     return create_client(url, key)
 
 
+def fetch_all_data(start_date=None, end_date=None, batch_size=1000) -> pd.DataFrame:
+    """Fetch ALL data matching date filters (for when value filters are active)."""
+    supabase = get_client()
+    all_data = []
+    offset = 0
+    
+    try:
+        while True:
+            query = supabase.table(DEFAULT_VIEW).select("*")
+            
+            if start_date:
+                query = query.gte("Date", str(start_date))
+            if end_date:
+                query = query.lte("Date", str(end_date))
+            
+            query = query.order("Date", desc=True).order("Time", desc=True).range(offset, offset + batch_size - 1)
+            
+            resp = query.execute()
+            batch = resp.data or []
+            
+            if not batch:
+                break
+                
+            all_data.extend(batch)
+            
+            if len(batch) < batch_size:
+                break
+                
+            offset += batch_size
+        
+        return pd.DataFrame(all_data)
+        
+    except Exception as e:
+        st.error(f"Error fetching all data from {DEFAULT_VIEW}: {e}")
+        return pd.DataFrame()
+
+
 def fetch_page(page: int, page_size: int, start_date=None, end_date=None) -> pd.DataFrame:
     """Fetch data with pagination and optional date filtering."""
     supabase = get_client()
@@ -334,6 +371,10 @@ def main():
     st.sidebar.markdown("---")
 
     st.sidebar.subheader("📊 Value Range (dB)")
+    
+    # Add info message about searching all data
+    value_filter_active = False
+    
     use_min = st.sidebar.checkbox("Filter by minimum value", value=False)
     vmin = None
     if use_min:
@@ -342,6 +383,7 @@ def main():
             value=40.0,
             help="Filter readings above this value",
         )
+        value_filter_active = True
 
     use_max = st.sidebar.checkbox("Filter by maximum value", value=False)
     vmax = None
@@ -351,17 +393,26 @@ def main():
             value=100.0,
             help="Filter readings below this value",
         )
+        value_filter_active = True
+    
+    if value_filter_active:
+        st.sidebar.info("🔍 Value filters will search ALL data in date range (may take longer)")
 
     st.sidebar.markdown("---")
 
     st.sidebar.subheader("📄 Pagination")
-    page = st.sidebar.number_input(
-        "Page Number",
-        min_value=0,
-        value=0,
-        step=1,
-        help=f"Navigate through pages (each page shows {PAGE_SIZE} rows)",
-    )
+    
+    if not value_filter_active:
+        page = st.sidebar.number_input(
+            "Page Number",
+            min_value=0,
+            value=0,
+            step=1,
+            help=f"Navigate through pages (each page shows {PAGE_SIZE} rows)",
+        )
+    else:
+        page = 0
+        st.sidebar.info("Pagination disabled when value filters are active")
 
     if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
         st.rerun()
@@ -371,9 +422,23 @@ def main():
     st.markdown('<div class="sub-header">Real-time noise level monitoring across multiple locations in Singapore</div>', unsafe_allow_html=True)
 
     try:
+        # Determine if we need to fetch all data or just one page
+        value_filter_active = (vmin is not None) or (vmax is not None)
+        
         with st.spinner("Loading data from database..."):
-            df = fetch_page(page, PAGE_SIZE, start_date, end_date)
-            filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
+            if value_filter_active:
+                # Fetch ALL data when value filters are active
+                st.info(f"🔍 Searching all records for values matching your criteria... This may take a moment.")
+                df = fetch_all_data(start_date, end_date)
+                filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
+                
+                # Show how many results found
+                if not filtered.empty:
+                    st.success(f"✅ Found {len(filtered)} records matching your filter criteria")
+            else:
+                # Normal pagination when no value filters
+                df = fetch_page(page, PAGE_SIZE, start_date, end_date)
+                filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
 
         if not filtered.empty:
             # === LATEST READINGS SECTION ===
@@ -487,10 +552,17 @@ def main():
 
             # === DATA TABLE ===
             st.markdown("### 📋 Detailed Data Table")
-            st.caption(
-                f"Showing **{len(filtered)}** rows from page **{page + 1}** (page size: {PAGE_SIZE}). "
-                "Sorted by most recent readings first."
-            )
+            
+            if value_filter_active:
+                st.caption(
+                    f"Showing **all {len(filtered)}** records matching your filter criteria. "
+                    "Sorted by most recent readings first."
+                )
+            else:
+                st.caption(
+                    f"Showing **{len(filtered)}** rows from page **{page + 1}** (page size: {PAGE_SIZE}). "
+                    "Sorted by most recent readings first."
+                )
 
             display_df = filtered.copy()
             if "Date" in display_df.columns:
