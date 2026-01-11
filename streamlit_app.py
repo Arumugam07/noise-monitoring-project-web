@@ -197,10 +197,12 @@ def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration
             if pd.notna(value) and min_db <= value <= max_db:
                 # Continue or start incident
                 if current_incident is None:
-                    # Start new incident
+                    # Start new incident - create timestamp from date and time
+                    timestamp_str = str(row['Date']) + ' ' + str(row['Time'])
+                    start_time = pd.to_datetime(timestamp_str)
                     current_incident = {
                         'location': loc,
-                        'start_time': pd.Timestamp.combine(row['Date'], row['Time']),
+                        'start_time': start_time,
                         'start_date': row['Date'],
                         'start_time_only': row['Time']
                     }
@@ -212,7 +214,9 @@ def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration
                 # Incident ended or gap in data
                 if current_incident is not None and len(incident_values) >= duration_minutes:
                     # Record the incident
-                    end_time = pd.Timestamp.combine(df_sorted.loc[idx-1, 'Date'], df_sorted.loc[idx-1, 'Time'])
+                    prev_row = df_sorted.iloc[df_sorted.index.get_loc(idx) - 1]
+                    timestamp_str = str(prev_row['Date']) + ' ' + str(prev_row['Time'])
+                    end_time = pd.to_datetime(timestamp_str)
                     incidents.append({
                         'location': current_incident['location'],
                         'start_time': current_incident['start_time'],
@@ -229,7 +233,8 @@ def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration
         # Check if there's an ongoing incident at the end
         if current_incident is not None and len(incident_values) >= duration_minutes:
             last_row = df_sorted.iloc[-1]
-            end_time = pd.Timestamp.combine(last_row['Date'], last_row['Time'])
+            timestamp_str = str(last_row['Date']) + ' ' + str(last_row['Time'])
+            end_time = pd.to_datetime(timestamp_str)
             incidents.append({
                 'location': current_incident['location'],
                 'start_time': current_incident['start_time'],
