@@ -1075,61 +1075,26 @@ def main():
                                     # No issues - show positive message
                                     issues_text = "No days offline"
 
-                                # Build issues HTML using format to avoid concatenation issues
-                                issues_html_built = '<div style="font-size: 0.75rem; color: {color}; margin-top: 0.25rem;">{text}</div>'.format(
-                                    color=text_color,
-                                    text=issues_text
-                                )
-
                                 # Add incident count if available
                                 incident_count = incidents_by_location.get(loc, 0)
-                                incident_html_built = ""
+
+                                # Build the entire card HTML as one string to avoid format() issues
+                                card_html = '<div style="background-color: ' + bg_color + '; border-left: 5px solid ' + border_color + '; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px; display: flex; flex-direction: column; justify-content: space-between;">'
+                                card_html += '<div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 ' + loc + '</div>'
+                                card_html += '<div style="font-size: 1.3rem; font-weight: bold; color: ' + text_color + ';">' + icon + ' ' + h['status'] + ' (' + str(int(h['completeness_pct'])) + '%)</div>'
+                                card_html += '<div style="font-size: 0.9rem; color: #333;"><strong>Days online:</strong> ' + str(h['online_days']) + '/' + str(h['total_days']) + '</div>'
+                                card_html += '<div style="font-size: 0.85rem; color: #666;"><strong>Readings:</strong> ' + "{:,}".format(h['total_readings']) + '/' + "{:,}".format(h['expected_readings']) + '</div>'
+
+                                # Add incident line if present
                                 if detect_persisted and incident_count > 0:
-                                    incident_html_built = '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: {count} incidents</div>'.format(
-                                        count=incident_count
-                                    )
+                                    card_html += '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: ' + str(incident_count) + ' incidents</div>'
 
-                                # Build severity HTML using format to avoid concatenation issues
-                                severity_html_built = '<div style="font-size: 0.8rem; font-weight: 600; color: {color}; margin-top: 0.25rem;">{text}</div>'.format(
-                                    color=text_color,
-                                    text=severity
-                                )
+                                # Add issues line
+                                card_html += '<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>'
 
-                                # Build the card HTML using string formatting to avoid f-string nesting issues
-                                card_html = """
-                                <div style="background-color: {bg}; border-left: 5px solid {border};
-                                     border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px;
-                                     display: flex; flex-direction: column; justify-content: space-between;">
-                                    <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {location}</div>
-                                    <div style="font-size: 1.3rem; font-weight: bold; color: {txt_color};">
-                                        {icon} {status} ({pct:.0f}%)
-                                    </div>
-                                    <div style="font-size: 0.9rem; color: #333;">
-                                        <strong>Days online:</strong> {online}/{total}
-                                    </div>
-                                    <div style="font-size: 0.85rem; color: #666;">
-                                        <strong>Readings:</strong> {readings:,}/{expected:,}
-                                    </div>
-                                    {incidents_section}
-                                    {issues}
-                                    {sev}
-                                </div>
-                                """.format(
-                                    bg=bg_color,
-                                    border=border_color,
-                                    location=loc,
-                                    txt_color=text_color,
-                                    icon=icon,
-                                    status=h['status'],
-                                    pct=h['completeness_pct'],
-                                    online=h['online_days'],
-                                    total=h['total_days'],
-                                    readings=h['total_readings'],
-                                    expected=h['expected_readings'],
-                                    incidents_section=incident_html_built,
-                                    issues=issues_html_built,
-                                    sev=severity_html_built
-                                )
+                                # Add severity line
+                                card_html += '<div style="font-size: 0.8rem; font-weight: 600; color: ' + text_color + '; margin-top: 0.25rem;">' + severity + '</div>'
+                                card_html += '</div>'
 
                                 with cols[j]:
                                     st.markdown(
