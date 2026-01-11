@@ -36,6 +36,9 @@ LOCATION_ID_TO_NAME = {
 
 DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
 PAGE_SIZE = 200
+READINGS_PER_DAY = 1440  # 60 min/hour * 24 hours
+OFFLINE_THRESHOLD = 0.10  # < 10% data = offline
+DEGRADED_THRESHOLD = 0.90  # < 90% data = degraded
 
 
 def get_noise_color(value):
@@ -64,6 +67,88 @@ def get_noise_category(value):
         return "Loud"
     else:
         return "Very Loud"
+
+
+def get_sensor_health_single_date(df, target_date, location_cols):
+    """Calculate sensor health for a single date (per-day accuracy)."""
+    day_df = df[df['Date'] == target_date]
+
+    if day_df.empty:
+        return {loc: {'reading_count': 0, 'completeness': 0.0, 'status': 'OFFLINE'}
+                for loc in location_cols}
+
+    health = {}
+    for loc in location_cols:
+        valid_count = day_df[loc].notna().sum() if loc in day_df.columns else 0
+        completeness = (valid_count / READINGS_PER_DAY * 100) if READINGS_PER_DAY > 0 else 0
+
+        if completeness >= DEGRADED_THRESHOLD * 100:
+            status = 'ONLINE'
+        elif completeness >= OFFLINE_THRESHOLD * 100:
+            status = 'DEGRADED'
+        else:
+            status = 'OFFLINE'
+
+        health[loc] = {
+            'reading_count': valid_count,
+            'completeness': completeness,
+            'status': status
+        }
+
+    return health
+
+
+def get_sensor_health_date_range(df, start_date, end_date, location_cols):
+    """Calculate sensor health across a date range (per-day accuracy)."""
+    total_days = (end_date - start_date).days + 1
+    health = {}
+
+    for loc in location_cols:
+        online_days = 0
+        offline_dates = []
+        degraded_dates = []
+
+        for single_date in pd.date_range(start_date, end_date, freq='D'):
+            single_date = single_date.date()
+            day_df = df[df['Date'] == single_date]
+
+            if day_df.empty or loc not in day_df.columns:
+                offline_dates.append(single_date)
+                continue
+
+            valid_count = day_df[loc].notna().sum()
+            completeness = (valid_count / READINGS_PER_DAY * 100) if READINGS_PER_DAY > 0 else 0
+
+            if completeness >= DEGRADED_THRESHOLD * 100:
+                online_days += 1
+            elif completeness >= OFFLINE_THRESHOLD * 100:
+                degraded_dates.append(single_date)
+            else:
+                offline_dates.append(single_date)
+
+        total_readings = df[loc].notna().sum() if loc in df.columns else 0
+        expected_readings = READINGS_PER_DAY * total_days
+        uptime_pct = (online_days / total_days * 100) if total_days > 0 else 0
+
+        if uptime_pct >= 90:
+            status = 'ONLINE'
+        elif uptime_pct >= 50:
+            status = 'DEGRADED'
+        else:
+            status = 'OFFLINE'
+
+        health[loc] = {
+            'online_days': online_days,
+            'total_days': total_days,
+            'uptime_pct': uptime_pct,
+            'total_readings': total_readings,
+            'expected_readings': expected_readings,
+            'status': status,
+            'offline_dates': offline_dates,
+            'degraded_dates': degraded_dates
+        }
+
+    return health
 
 
 def get_client():
@@ -651,74 +736,142 @@ def main():
                                 )
                 
             else:
-                # === LATEST READINGS SECTION (No Filters) ===
-                st.markdown("### 🔴 Latest Readings")
-                st.caption("Most recent noise levels from selected monitoring stations")
-                
-                latest_row = filtered.iloc[0]  # First row is most recent due to desc order
-                
-                # Display latest reading time
-                if "Date" in latest_row.index and "Time" in latest_row.index:
-                    latest_time = f"{latest_row['Date']} {latest_row['Time']}"
-                    st.info(f"📅 Last updated: **{latest_time}**")
-                
-                # Create cards for each location
+                # === SENSOR HEALTH MONITORING SECTION (No Filters) ===
                 location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
-                
-                # Track offline stations
-                offline_stations = []
-                for loc in location_cols:
-                    if loc in latest_row.index and pd.isna(latest_row[loc]):
-                        offline_stations.append(loc)
-                
-                # Show offline alert if any stations are down
-                if offline_stations:
-                    st.error(f"⚠️ **{len(offline_stations)} Station(s) Offline** - No recent data received")
-                
-                # Display in rows of 3 cards
-                for i in range(0, len(location_cols), 3):
-                    cols = st.columns(3)
-                    for j, col_obj in enumerate(cols):
-                        if i + j < len(location_cols):
-                            loc = location_cols[i + j]
-                            if loc in latest_row.index and not pd.isna(latest_row[loc]):
-                                value = latest_row[loc]
-                                color = get_noise_color(value)
-                                category = get_noise_category(value)
-                                
-                                with col_obj:
+                is_single_date = (start_date == end_date)
+
+                if is_single_date:
+                    # Single Date View
+                    st.markdown(f"### 📅 Sensor Status for {start_date.strftime('%B %d, %Y')}")
+                    st.caption(f"Total readings expected: {READINGS_PER_DAY:,} per sensor (one reading per minute)")
+
+                    # Calculate health
+                    health = get_sensor_health_single_date(filtered, start_date, location_cols)
+
+                    # System summary
+                    online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
+                    degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
+                    offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
+                    system_health = (online_count / len(health) * 100) if health else 0
+
+                    st.info(
+                        f"**System Health: {system_health:.0f}%** | "
+                        f"✅ {online_count} Online | "
+                        f"⚠️ {degraded_count} Degraded | "
+                        f"❌ {offline_count} Offline"
+                    )
+
+                    # Sort by status (offline first)
+                    status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
+                    sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], x[0]))
+
+                    # Render cards in rows of 3
+                    for i in range(0, len(sorted_sensors), 3):
+                        cols = st.columns(3)
+                        for j in range(3):
+                            if i + j < len(sorted_sensors):
+                                loc, h = sorted_sensors[i + j]
+                                colors = {
+                                    'ONLINE': {'bg': '#d4edda', 'border': '#28a745', 'text': '#155724'},
+                                    'DEGRADED': {'bg': '#fff3cd', 'border': '#ffc107', 'text': '#856404'},
+                                    'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
+                                }
+                                color = colors[h['status']]
+                                icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
+                                messages = {'ONLINE': 'Fully operational', 'DEGRADED': 'Monitor closely', 'OFFLINE': 'Needs maintenance'}
+
+                                with cols[j]:
                                     st.markdown(
                                         f"""
-                                        <div class="latest-reading-card" style="border-left-color: {color};">
-                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                📍 {loc}
+                                        <div style="background-color: {color['bg']}; border-left: 5px solid {color['border']};
+                                             border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 160px;
+                                             display: flex; flex-direction: column; justify-content: space-between;">
+                                            <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
+                                            <div style="font-size: 1.5rem; font-weight: bold; color: {color['text']};">
+                                                {icons[h['status']]} {h['status']}
                                             </div>
-                                            <div style="font-size: 2.5rem; font-weight: bold; color: {color}; margin: 0.5rem 0;">
-                                                {value:.1f} <span style="font-size: 1.2rem;">dB</span>
+                                            <div style="font-size: 1.1rem; font-weight: 600; color: #333;">
+                                                {h['reading_count']:,}/{READINGS_PER_DAY:,}
                                             </div>
-                                            <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
-                                                 background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
-                                                {category}
-                                            </div>
+                                            <div style="font-size: 0.9rem; color: #666;">{h['completeness']:.1f}% complete</div>
+                                            <div style="font-size: 0.8rem; color: {color['text']};">{messages[h['status']]}</div>
                                         </div>
                                         """,
                                         unsafe_allow_html=True
                                     )
-                            else:
-                                with col_obj:
-                                    # Show as OFFLINE with warning
+
+                else:
+                    # Date Range View
+                    st.markdown(f"### 🔴 Sensor Health Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')})")
+                    st.caption(f"Analysis period: {(end_date - start_date).days + 1} days")
+
+                    # Calculate health
+                    health = get_sensor_health_date_range(filtered, start_date, end_date, location_cols)
+
+                    # System summary
+                    online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
+                    degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
+                    offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
+                    system_health = (online_count / len(health) * 100) if health else 0
+
+                    st.info(
+                        f"**Overall System Health: {system_health:.0f}%** | "
+                        f"✅ {online_count} Operational | "
+                        f"⚠️ {degraded_count} Degraded | "
+                        f"❌ {offline_count} Critical"
+                    )
+
+                    # Sort by status (critical first)
+                    status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
+                    sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], -len(x[1]['offline_dates'])))
+
+                    # Render cards in rows of 3
+                    for i in range(0, len(sorted_sensors), 3):
+                        cols = st.columns(3)
+                        for j in range(3):
+                            if i + j < len(sorted_sensors):
+                                loc, h = sorted_sensors[i + j]
+                                colors = {
+                                    'ONLINE': {'bg': '#d4edda', 'border': '#28a745', 'text': '#155724'},
+                                    'DEGRADED': {'bg': '#fff3cd', 'border': '#ffc107', 'text': '#856404'},
+                                    'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
+                                }
+                                color = colors[h['status']]
+                                icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
+                                severities = {'ONLINE': 'Operational', 'DEGRADED': 'Monitor', 'OFFLINE': 'CRITICAL'}
+
+                                # Format issue dates
+                                issues_text = ""
+                                if h['offline_dates']:
+                                    if len(h['offline_dates']) <= 3:
+                                        issues_text = f"Offline: {', '.join([d.strftime('%b %d') for d in h['offline_dates']])}"
+                                    else:
+                                        issues_text = f"Offline: {len(h['offline_dates'])} days"
+                                elif h['degraded_dates']:
+                                    if len(h['degraded_dates']) <= 3:
+                                        issues_text = f"Issues: {', '.join([d.strftime('%b %d') for d in h['degraded_dates']])}"
+                                    else:
+                                        issues_text = f"Issues: {len(h['degraded_dates'])} days"
+
+                                with cols[j]:
                                     st.markdown(
                                         f"""
-                                        <div class="latest-reading-card" style="border-left-color: #dc3545; background-color: #fff5f5;">
-                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">
-                                                📍 {loc}
+                                        <div style="background-color: {color['bg']}; border-left: 5px solid {color['border']};
+                                             border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 200px;
+                                             display: flex; flex-direction: column; justify-content: space-between;">
+                                            <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
+                                            <div style="font-size: 1.3rem; font-weight: bold; color: {color['text']};">
+                                                {icons[h['status']]} {h['status']} ({h['uptime_pct']:.0f}%)
                                             </div>
-                                            <div style="font-size: 2rem; font-weight: bold; color: #dc3545; margin: 0.5rem 0;">
-                                                ⚠️ OFFLINE
+                                            <div style="font-size: 0.9rem; color: #333;">
+                                                <strong>Uptime:</strong> {h['online_days']}/{h['total_days']} days
                                             </div>
-                                            <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px; 
-                                                 background-color: #dc3545; color: white; font-size: 0.85rem; font-weight: 600;">
-                                                Station Down
+                                            <div style="font-size: 0.85rem; color: #666;">
+                                                <strong>Readings:</strong> {h['total_readings']:,}/{h['expected_readings']:,}
+                                            </div>
+                                            {f'<div style="font-size: 0.8rem; color: {color["text"]};">{issues_text}</div>' if issues_text else ''}
+                                            <div style="font-size: 0.8rem; font-weight: 600; color: {color['text']};">
+                                                {severities[h['status']]}
                                             </div>
                                         </div>
                                         """,
