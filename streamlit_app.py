@@ -885,14 +885,16 @@ def main():
                                 icon = icons[h['status']]
                                 severity = severities[h['status']]
 
-                                # Format issue dates
-                                issues_text = ""
+                                # Format issue dates - always show something to prevent HTML rendering issues
                                 if h['offline_dates']:
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
                                     issues_text = "Offline: " + dates_str
                                 elif h['degraded_dates']:
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
                                     issues_text = "Degraded: " + dates_str
+                                else:
+                                    # No issues - show positive message
+                                    issues_text = "No days offline"
 
                                 # Build the card HTML using string formatting to avoid f-string nesting issues
                                 card_html = """
@@ -926,7 +928,7 @@ def main():
                                     total=h['total_days'],
                                     readings=h['total_readings'],
                                     expected=h['expected_readings'],
-                                    issues=('<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>') if issues_text else '',
+                                    issues='<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>',
                                     sev=severity
                                 )
 
