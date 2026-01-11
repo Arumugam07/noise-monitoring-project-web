@@ -163,6 +163,85 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
     return health
 
 
+def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration_minutes):
+    """
+    Detect periods where noise levels stay continuously within a dB range for a minimum duration.
+
+    Args:
+        df: DataFrame with 'Date' and 'Time' columns plus location columns
+        location_cols: List of location column names
+        min_db: Minimum dB threshold
+        max_db: Maximum dB threshold
+        duration_minutes: Minimum consecutive minutes to flag as incident
+
+    Returns:
+        List of incident dictionaries with location, start_time, end_time, duration, peak_db, avg_db
+    """
+    incidents = []
+
+    # Sort by Date and Time to ensure chronological order
+    df_sorted = df.sort_values(['Date', 'Time']).copy()
+
+    for loc in location_cols:
+        if loc not in df_sorted.columns:
+            continue
+
+        # Track current incident
+        current_incident = None
+        incident_values = []
+
+        for idx, row in df_sorted.iterrows():
+            value = row[loc]
+
+            # Check if value is within range
+            if pd.notna(value) and min_db <= value <= max_db:
+                # Continue or start incident
+                if current_incident is None:
+                    # Start new incident
+                    current_incident = {
+                        'location': loc,
+                        'start_time': pd.Timestamp.combine(row['Date'], row['Time']),
+                        'start_date': row['Date'],
+                        'start_time_only': row['Time']
+                    }
+                    incident_values = [value]
+                else:
+                    # Continue incident
+                    incident_values.append(value)
+            else:
+                # Incident ended or gap in data
+                if current_incident is not None and len(incident_values) >= duration_minutes:
+                    # Record the incident
+                    end_time = pd.Timestamp.combine(df_sorted.loc[idx-1, 'Date'], df_sorted.loc[idx-1, 'Time'])
+                    incidents.append({
+                        'location': current_incident['location'],
+                        'start_time': current_incident['start_time'],
+                        'end_time': end_time,
+                        'duration': len(incident_values),
+                        'peak_db': max(incident_values),
+                        'avg_db': sum(incident_values) / len(incident_values)
+                    })
+
+                # Reset
+                current_incident = None
+                incident_values = []
+
+        # Check if there's an ongoing incident at the end
+        if current_incident is not None and len(incident_values) >= duration_minutes:
+            last_row = df_sorted.iloc[-1]
+            end_time = pd.Timestamp.combine(last_row['Date'], last_row['Time'])
+            incidents.append({
+                'location': current_incident['location'],
+                'start_time': current_incident['start_time'],
+                'end_time': end_time,
+                'duration': len(incident_values),
+                'peak_db': max(incident_values),
+                'avg_db': sum(incident_values) / len(incident_values)
+            })
+
+    return incidents
+
+
 def get_client():
     """Create Supabase client from env or Streamlit secrets."""
     load_dotenv()
@@ -634,6 +713,49 @@ def main():
 
     st.sidebar.markdown("---")
 
+    st.sidebar.subheader("🔊 Persisted Noise Detection")
+
+    detect_persisted = st.sidebar.checkbox("Enable Detection", value=False, help="Detect sustained high noise periods")
+
+    # Initialize variables
+    persist_min_db = 90
+    persist_max_db = 100
+    persist_duration = 3
+
+    if detect_persisted:
+        col1, col2 = st.sidebar.columns(2)
+        with col1:
+            persist_min_db = st.sidebar.number_input(
+                "Min dB",
+                min_value=0,
+                max_value=200,
+                value=90,
+                step=1,
+                help="Minimum noise level threshold"
+            )
+        with col2:
+            persist_max_db = st.sidebar.number_input(
+                "Max dB",
+                min_value=0,
+                max_value=200,
+                value=100,
+                step=1,
+                help="Maximum noise level threshold"
+            )
+
+        persist_duration = st.sidebar.number_input(
+            "Duration (minutes)",
+            min_value=1,
+            max_value=60,
+            value=3,
+            step=1,
+            help="Minimum consecutive minutes to flag as incident"
+        )
+
+        st.sidebar.info(f"🔍 Detecting noise between {persist_min_db}-{persist_max_db}dB for {persist_duration}+ minutes")
+
+    st.sidebar.markdown("---")
+
     st.sidebar.subheader("📄 Pagination")
     
     if not value_filter_active:
@@ -832,6 +954,49 @@ def main():
                         if col in filtered.columns:
                             total_actual_readings += filtered[col].notna().sum()
 
+                    # Persisted Noise Incidents Section
+                    if detect_persisted:
+                        st.markdown("---")
+                        st.markdown(f"### 🔊 Persisted Noise Incidents ({persist_min_db}-{persist_max_db}dB, {persist_duration}+ min)")
+
+                        with st.spinner("Analyzing noise patterns..."):
+                            incidents = detect_persisted_noise_incidents(
+                                filtered,
+                                location_cols,
+                                persist_min_db,
+                                persist_max_db,
+                                persist_duration
+                            )
+
+                        if incidents:
+                            num_locations = len(set(inc['location'] for inc in incidents))
+                            st.success(f"🔍 Found **{len(incidents)}** incidents across **{num_locations}** locations")
+
+                            # Convert to DataFrame for display
+                            incidents_df = pd.DataFrame(incidents)
+                            incidents_df['start_time_display'] = incidents_df['start_time'].dt.strftime('%b %d, %H:%M')
+                            incidents_df['end_time_display'] = incidents_df['end_time'].dt.strftime('%b %d, %H:%M')
+                            incidents_df['peak_db'] = incidents_df['peak_db'].round(1)
+                            incidents_df['avg_db'] = incidents_df['avg_db'].round(1)
+
+                            # Display as sortable dataframe
+                            display_df = incidents_df[[
+                                'location', 'start_time_display', 'end_time_display',
+                                'duration', 'peak_db', 'avg_db'
+                            ]].copy()
+
+                            display_df.columns = ['Location', 'Start Time', 'End Time', 'Duration (min)', 'Peak dB', 'Avg dB']
+
+                            st.dataframe(
+                                display_df,
+                                use_container_width=True,
+                                hide_index=True
+                            )
+                        else:
+                            st.info(f"✓ No persisted noise incidents detected for {persist_min_db}-{persist_max_db}dB lasting {persist_duration}+ minutes")
+
+                        st.markdown("---")
+
                     st.markdown(f"### 🔴 Sensor Health Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')})")
                     st.caption(
                         f"Analysis period: **{total_days} days** | "
@@ -858,6 +1023,15 @@ def main():
                         f"⚠️ {degraded_count} Degraded | "
                         f"❌ {offline_count} Critical"
                     )
+
+                    # Calculate incidents per location if detection is enabled
+                    incidents_by_location = {}
+                    if detect_persisted and 'incidents' in locals():
+                        for incident in incidents:
+                            loc = incident['location']
+                            if loc not in incidents_by_location:
+                                incidents_by_location[loc] = 0
+                            incidents_by_location[loc] += 1
 
                     # Sort by status (critical first)
                     status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
@@ -896,6 +1070,12 @@ def main():
                                     # No issues - show positive message
                                     issues_text = "No days offline"
 
+                                # Add incident count if available
+                                incident_count = incidents_by_location.get(loc, 0)
+                                incident_html = ""
+                                if detect_persisted and incident_count > 0:
+                                    incident_html = '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: ' + str(incident_count) + ' incidents</div>'
+
                                 # Build the card HTML using string formatting to avoid f-string nesting issues
                                 card_html = """
                                 <div style="background-color: {bg}; border-left: 5px solid {border};
@@ -911,6 +1091,7 @@ def main():
                                     <div style="font-size: 0.85rem; color: #666;">
                                         <strong>Readings:</strong> {readings:,}/{expected:,}
                                     </div>
+                                    {incidents_section}
                                     {issues}
                                     <div style="font-size: 0.8rem; font-weight: 600; color: {txt_color}; margin-top: 0.25rem;">
                                         {sev}
@@ -928,6 +1109,7 @@ def main():
                                     total=h['total_days'],
                                     readings=h['total_readings'],
                                     expected=h['expected_readings'],
+                                    incidents_section=incident_html,
                                     issues='<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>',
                                     sev=severity
                                 )
