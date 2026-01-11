@@ -650,7 +650,9 @@ def main():
         with st.spinner("Loading all data from database for accurate health monitoring..."):
             # ALWAYS fetch ALL data for accurate health monitoring
             df_all = fetch_all_data(start_date, end_date)
+            st.info(f"🔍 DEBUG: Fetched {len(df_all)} total rows from database for date range")
             filtered_all = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
+            st.info(f"🔍 DEBUG: After filtering: {len(filtered_all)} rows")
 
             if value_filter_active:
                 # When value filters active, use ALL data for everything
@@ -746,6 +748,8 @@ def main():
                 # === SENSOR HEALTH MONITORING SECTION (No Filters) ===
                 location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
                 is_single_date = (start_date == end_date)
+
+                st.info(f"🔍 DEBUG: About to calculate health with {len(filtered)} rows, {len(location_cols)} sensors")
 
                 if is_single_date:
                     # Single Date View
