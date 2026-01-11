@@ -121,14 +121,19 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
                 continue
 
             valid_count = day_df[loc].notna().sum()
-            completeness = (valid_count / READINGS_PER_DAY * 100) if READINGS_PER_DAY > 0 else 0
 
-            if completeness >= DEGRADED_THRESHOLD * 100:
-                online_days += 1
-            elif completeness >= OFFLINE_THRESHOLD * 100:
-                degraded_dates.append(single_date)
-            else:
+            # A day is only offline if it has ZERO readings
+            # Any readings = online (even if degraded)
+            if valid_count == 0:
                 offline_dates.append(single_date)
+            else:
+                # Has some readings = counts as online day
+                online_days += 1
+
+                # But track if it was degraded (low data quality)
+                completeness = (valid_count / READINGS_PER_DAY * 100) if READINGS_PER_DAY > 0 else 0
+                if completeness < OFFLINE_THRESHOLD * 100:
+                    degraded_dates.append(single_date)
 
         total_readings = df[loc].notna().sum() if loc in df.columns else 0
         expected_readings = READINGS_PER_DAY * total_days
@@ -870,31 +875,38 @@ def main():
                                     'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
                                 }
                                 color = colors[h['status']]
+                                # Extract color values to avoid nested dict access in f-strings
+                                bg_color = color['bg']
+                                border_color = color['border']
+                                text_color = color['text']
+
                                 icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
                                 severities = {'ONLINE': 'Operational', 'DEGRADED': 'Monitor', 'OFFLINE': 'CRITICAL'}
+                                icon = icons[h['status']]
+                                severity = severities[h['status']]
 
                                 # Format issue dates - ALWAYS show all dates
-                                issues_text = ""
+                                # Build HTML separately to avoid nested f-string issues
                                 issues_html = ""
                                 if h['offline_dates']:
                                     # Always list all dates, no truncation
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
                                     issues_text = f"Offline: {dates_str}"
-                                    issues_html = f'<div style="font-size: 0.75rem; color: {color["text"]}; margin-top: 0.25rem;">{issues_text}</div>'
+                                    issues_html = f'<div style="font-size: 0.75rem; color: {text_color}; margin-top: 0.25rem;">{issues_text}</div>'
                                 elif h['degraded_dates']:
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
                                     issues_text = f"Degraded: {dates_str}"
-                                    issues_html = f'<div style="font-size: 0.75rem; color: {color["text"]}; margin-top: 0.25rem;">{issues_text}</div>'
+                                    issues_html = f'<div style="font-size: 0.75rem; color: {text_color}; margin-top: 0.25rem;">{issues_text}</div>'
 
                                 with cols[j]:
                                     st.markdown(
                                         f"""
-                                        <div style="background-color: {color['bg']}; border-left: 5px solid {color['border']};
+                                        <div style="background-color: {bg_color}; border-left: 5px solid {border_color};
                                              border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px;
                                              display: flex; flex-direction: column; justify-content: space-between;">
                                             <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
-                                            <div style="font-size: 1.3rem; font-weight: bold; color: {color['text']};">
-                                                {icons[h['status']]} {h['status']} ({h['completeness_pct']:.0f}%)
+                                            <div style="font-size: 1.3rem; font-weight: bold; color: {text_color};">
+                                                {icon} {h['status']} ({h['completeness_pct']:.0f}%)
                                             </div>
                                             <div style="font-size: 0.9rem; color: #333;">
                                                 <strong>Days online:</strong> {h['online_days']}/{h['total_days']}
@@ -903,8 +915,8 @@ def main():
                                                 <strong>Readings:</strong> {h['total_readings']:,}/{h['expected_readings']:,}
                                             </div>
                                             {issues_html}
-                                            <div style="font-size: 0.8rem; font-weight: 600; color: {color['text']}; margin-top: 0.25rem;">
-                                                {severities[h['status']]}
+                                            <div style="font-size: 0.8rem; font-weight: 600; color: {text_color}; margin-top: 0.25rem;">
+                                                {severity}
                                             </div>
                                         </div>
                                         """,
