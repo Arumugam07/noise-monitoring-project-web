@@ -898,6 +898,9 @@ def main():
                                     issues_text = f"Degraded: {dates_str}"
                                     issues_html = f'<div style="font-size: 0.75rem; color: {text_color}; margin-top: 0.25rem;">{issues_text}</div>'
 
+                                # Build severity HTML separately to avoid f-string rendering issues
+                                severity_html = f'<div style="font-size: 0.8rem; font-weight: 600; color: {text_color}; margin-top: 0.25rem;">{severity}</div>'
+
                                 with cols[j]:
                                     st.markdown(
                                         f"""
@@ -915,9 +918,7 @@ def main():
                                                 <strong>Readings:</strong> {h['total_readings']:,}/{h['expected_readings']:,}
                                             </div>
                                             {issues_html}
-                                            <div style="font-size: 0.8rem; font-weight: 600; color: {text_color}; margin-top: 0.25rem;">
-                                                {severity}
-                                            </div>
+                                            {severity_html}
                                         </div>
                                         """,
                                         unsafe_allow_html=True
