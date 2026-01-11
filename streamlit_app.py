@@ -817,14 +817,21 @@ def main():
                 else:
                     # Date Range View
                     total_days = (end_date - start_date).days + 1
-                    total_expected = READINGS_PER_DAY * total_days * len(location_cols)
-                    total_actual = len(filtered)
+                    expected_timestamps = READINGS_PER_DAY * total_days  # Expected rows
+                    actual_timestamps = len(filtered)  # Actual rows
+
+                    # Calculate total actual readings across all sensors
+                    total_actual_readings = 0
+                    total_expected_readings = expected_timestamps * len(location_cols)
+                    for col in location_cols:
+                        if col in filtered.columns:
+                            total_actual_readings += filtered[col].notna().sum()
 
                     st.markdown(f"### 🔴 Sensor Health Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')})")
                     st.caption(
                         f"Analysis period: **{total_days} days** | "
-                        f"Data fetched: **{total_actual:,}** of **{total_expected:,}** expected timestamps "
-                        f"({total_actual/total_expected*100:.1f}% overall completeness)"
+                        f"Timestamps: **{actual_timestamps:,}** of **{expected_timestamps:,}** ({actual_timestamps/expected_timestamps*100:.1f}%) | "
+                        f"Total readings: **{total_actual_readings:,}** of **{total_expected_readings:,}** ({total_actual_readings/total_expected_readings*100:.1f}%)"
                     )
                     st.caption(
                         "📊 Status based on data completeness: "
@@ -868,13 +875,16 @@ def main():
 
                                 # Format issue dates - ALWAYS show all dates
                                 issues_text = ""
+                                issues_html = ""
                                 if h['offline_dates']:
                                     # Always list all dates, no truncation
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
                                     issues_text = f"Offline: {dates_str}"
+                                    issues_html = f'<div style="font-size: 0.75rem; color: {color["text"]}; margin-top: 0.25rem;">{issues_text}</div>'
                                 elif h['degraded_dates']:
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
                                     issues_text = f"Degraded: {dates_str}"
+                                    issues_html = f'<div style="font-size: 0.75rem; color: {color["text"]}; margin-top: 0.25rem;">{issues_text}</div>'
 
                                 with cols[j]:
                                     st.markdown(
@@ -892,7 +902,7 @@ def main():
                                             <div style="font-size: 0.85rem; color: #666;">
                                                 <strong>Readings:</strong> {h['total_readings']:,}/{h['expected_readings']:,}
                                             </div>
-                                            {f'<div style="font-size: 0.75rem; color: {color["text"]}; margin-top: 0.25rem;">{issues_text}</div>' if issues_text else ''}
+                                            {issues_html}
                                             <div style="font-size: 0.8rem; font-weight: 600; color: {color['text']}; margin-top: 0.25rem;">
                                                 {severities[h['status']]}
                                             </div>
