@@ -646,21 +646,28 @@ def main():
     try:
         # Determine if we need to fetch all data or just one page
         value_filter_active = (vmin is not None) or (vmax is not None)
-        
-        with st.spinner("Loading data from database..."):
+
+        with st.spinner("Loading all data from database for accurate health monitoring..."):
+            # ALWAYS fetch ALL data for accurate health monitoring
+            df_all = fetch_all_data(start_date, end_date)
+            filtered_all = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
+
             if value_filter_active:
-                # Fetch ALL data when value filters are active
+                # When value filters active, use ALL data for everything
                 st.info(f"🔍 Searching all records for values matching your criteria... This may take a moment.")
-                df = fetch_all_data(start_date, end_date)
-                filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
-                
+                filtered = filtered_all
+
                 # Show how many results found
                 if not filtered.empty:
                     st.success(f"✅ Found {len(filtered)} records matching your filter criteria")
             else:
-                # Normal pagination when no value filters
-                df = fetch_page(page, PAGE_SIZE, start_date, end_date)
-                filtered = filter_frame(df, start_date, end_date, selected_ids, vmin, vmax)
+                # Fetch paginated data for table display only
+                df_page = fetch_page(page, PAGE_SIZE, start_date, end_date)
+                filtered_page = filter_frame(df_page, start_date, end_date, selected_ids, vmin, vmax)
+
+                # Use ALL data for health, paginated data for table
+                filtered = filtered_all  # For health calculations
+                filtered_table = filtered_page  # For table display
 
         if not filtered.empty:
             # Check if any value filters are active
@@ -890,7 +897,7 @@ def main():
                 st.metric(
                     label="Total Records",
                     value=f"{len(filtered):,}",
-                    help="Total number of readings in current view"
+                    help="Total number of readings in selected date range (all data, not just current page)"
                 )
 
             # Calculate statistics for numeric columns (location columns)
@@ -929,19 +936,22 @@ def main():
 
             # === DATA TABLE ===
             st.markdown("### 📋 Detailed Data Table")
-            
+
+            # Use appropriate dataset for table display
             if value_filter_active:
+                table_data = filtered  # All data when filtering
                 st.caption(
-                    f"Showing **all {len(filtered)}** records matching your filter criteria. "
+                    f"Showing **all {len(table_data)}** records matching your filter criteria. "
                     "Sorted by most recent readings first."
                 )
             else:
+                table_data = filtered_table  # Paginated data when no filters
                 st.caption(
-                    f"Showing **{len(filtered)}** rows from page **{page + 1}** (page size: {PAGE_SIZE}). "
+                    f"Showing **{len(table_data)}** rows from page **{page + 1}** (page size: {PAGE_SIZE}). "
                     "Sorted by most recent readings first."
                 )
 
-            display_df = filtered.copy()
+            display_df = table_data.copy()
             if "Date" in display_df.columns:
                 display_df["Date"] = pd.to_datetime(display_df["Date"]).dt.strftime(
                     "%Y-%m-%d"
