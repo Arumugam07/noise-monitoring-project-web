@@ -885,42 +885,54 @@ def main():
                                 icon = icons[h['status']]
                                 severity = severities[h['status']]
 
-                                # Format issue dates - ALWAYS show all dates
-                                # Build HTML separately to avoid nested f-string issues
-                                issues_html = ""
+                                # Format issue dates
+                                issues_text = ""
                                 if h['offline_dates']:
-                                    # Always list all dates, no truncation
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
-                                    issues_text = f"Offline: {dates_str}"
-                                    issues_html = f'<div style="font-size: 0.75rem; color: {text_color}; margin-top: 0.25rem;">{issues_text}</div>'
+                                    issues_text = "Offline: " + dates_str
                                 elif h['degraded_dates']:
                                     dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
-                                    issues_text = f"Degraded: {dates_str}"
-                                    issues_html = f'<div style="font-size: 0.75rem; color: {text_color}; margin-top: 0.25rem;">{issues_text}</div>'
+                                    issues_text = "Degraded: " + dates_str
 
-                                # Build severity HTML separately to avoid f-string rendering issues
-                                severity_html = f'<div style="font-size: 0.8rem; font-weight: 600; color: {text_color}; margin-top: 0.25rem;">{severity}</div>'
+                                # Build the card HTML using string formatting to avoid f-string nesting issues
+                                card_html = """
+                                <div style="background-color: {bg}; border-left: 5px solid {border};
+                                     border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px;
+                                     display: flex; flex-direction: column; justify-content: space-between;">
+                                    <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {location}</div>
+                                    <div style="font-size: 1.3rem; font-weight: bold; color: {txt_color};">
+                                        {icon} {status} ({pct:.0f}%)
+                                    </div>
+                                    <div style="font-size: 0.9rem; color: #333;">
+                                        <strong>Days online:</strong> {online}/{total}
+                                    </div>
+                                    <div style="font-size: 0.85rem; color: #666;">
+                                        <strong>Readings:</strong> {readings:,}/{expected:,}
+                                    </div>
+                                    {issues}
+                                    <div style="font-size: 0.8rem; font-weight: 600; color: {txt_color}; margin-top: 0.25rem;">
+                                        {sev}
+                                    </div>
+                                </div>
+                                """.format(
+                                    bg=bg_color,
+                                    border=border_color,
+                                    location=loc,
+                                    txt_color=text_color,
+                                    icon=icon,
+                                    status=h['status'],
+                                    pct=h['completeness_pct'],
+                                    online=h['online_days'],
+                                    total=h['total_days'],
+                                    readings=h['total_readings'],
+                                    expected=h['expected_readings'],
+                                    issues=('<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>') if issues_text else '',
+                                    sev=severity
+                                )
 
                                 with cols[j]:
                                     st.markdown(
-                                        f"""
-                                        <div style="background-color: {bg_color}; border-left: 5px solid {border_color};
-                                             border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px;
-                                             display: flex; flex-direction: column; justify-content: space-between;">
-                                            <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
-                                            <div style="font-size: 1.3rem; font-weight: bold; color: {text_color};">
-                                                {icon} {h['status']} ({h['completeness_pct']:.0f}%)
-                                            </div>
-                                            <div style="font-size: 0.9rem; color: #333;">
-                                                <strong>Days online:</strong> {h['online_days']}/{h['total_days']}
-                                            </div>
-                                            <div style="font-size: 0.85rem; color: #666;">
-                                                <strong>Readings:</strong> {h['total_readings']:,}/{h['expected_readings']:,}
-                                            </div>
-                                            {issues_html}
-                                            {severity_html}
-                                        </div>
-                                        """,
+                                        card_html,
                                         unsafe_allow_html=True
                                     )
             
