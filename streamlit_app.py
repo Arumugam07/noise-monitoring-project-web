@@ -1075,11 +1075,17 @@ def main():
                                     # No issues - show positive message
                                     issues_text = "No days offline"
 
+                                # Build issues HTML BEFORE the format call
+                                issues_html_built = '<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>'
+
                                 # Add incident count if available
                                 incident_count = incidents_by_location.get(loc, 0)
-                                incident_html = ""
+                                incident_html_built = ""
                                 if detect_persisted and incident_count > 0:
-                                    incident_html = '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: ' + str(incident_count) + ' incidents</div>'
+                                    incident_html_built = '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: ' + str(incident_count) + ' incidents</div>'
+
+                                # Build severity HTML BEFORE the format call
+                                severity_html_built = '<div style="font-size: 0.8rem; font-weight: 600; color: ' + text_color + '; margin-top: 0.25rem;">' + severity + '</div>'
 
                                 # Build the card HTML using string formatting to avoid f-string nesting issues
                                 card_html = """
@@ -1098,9 +1104,7 @@ def main():
                                     </div>
                                     {incidents_section}
                                     {issues}
-                                    <div style="font-size: 0.8rem; font-weight: 600; color: {txt_color}; margin-top: 0.25rem;">
-                                        {sev}
-                                    </div>
+                                    {sev}
                                 </div>
                                 """.format(
                                     bg=bg_color,
@@ -1114,9 +1118,9 @@ def main():
                                     total=h['total_days'],
                                     readings=h['total_readings'],
                                     expected=h['expected_readings'],
-                                    incidents_section=incident_html,
-                                    issues='<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>',
-                                    sev=severity
+                                    incidents_section=incident_html_built,
+                                    issues=issues_html_built,
+                                    sev=severity_html_built
                                 )
 
                                 with cols[j]:
