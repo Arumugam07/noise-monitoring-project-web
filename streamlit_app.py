@@ -37,8 +37,12 @@ LOCATION_ID_TO_NAME = {
 DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
 PAGE_SIZE = 200
 READINGS_PER_DAY = 1440  # 60 min/hour * 24 hours
-OFFLINE_THRESHOLD = 0.10  # < 10% data = offline
-DEGRADED_THRESHOLD = 0.90  # < 90% data = degraded
+# Adjusted thresholds for real-world data with gaps
+OFFLINE_THRESHOLD = 0.30  # < 30% data = offline (was 10%)
+DEGRADED_THRESHOLD = 0.70  # < 70% data = degraded (was 90%)
+# For overall status across date range
+ONLINE_OVERALL_THRESHOLD = 0.70  # ≥70% total readings = operational
+DEGRADED_OVERALL_THRESHOLD = 0.40  # 40-70% = degraded
 
 
 def get_noise_color(value):
@@ -129,10 +133,12 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
         total_readings = df[loc].notna().sum() if loc in df.columns else 0
         expected_readings = READINGS_PER_DAY * total_days
         uptime_pct = (online_days / total_days * 100) if total_days > 0 else 0
+        completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
 
-        if uptime_pct >= 90:
+        # Determine status based on OVERALL completeness, not just uptime days
+        if completeness_pct >= ONLINE_OVERALL_THRESHOLD * 100:
             status = 'ONLINE'
-        elif uptime_pct >= 50:
+        elif completeness_pct >= DEGRADED_OVERALL_THRESHOLD * 100:
             status = 'DEGRADED'
         else:
             status = 'OFFLINE'
@@ -141,6 +147,7 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
             'online_days': online_days,
             'total_days': total_days,
             'uptime_pct': uptime_pct,
+            'completeness_pct': completeness_pct,
             'total_readings': total_readings,
             'expected_readings': expected_readings,
             'status': status,
@@ -650,9 +657,7 @@ def main():
         with st.spinner("Loading all data from database for accurate health monitoring..."):
             # ALWAYS fetch ALL data for accurate health monitoring
             df_all = fetch_all_data(start_date, end_date)
-            st.info(f"🔍 DEBUG: Fetched {len(df_all)} total rows from database for date range")
             filtered_all = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
-            st.info(f"🔍 DEBUG: After filtering: {len(filtered_all)} rows")
 
             if value_filter_active:
                 # When value filters active, use ALL data for everything
@@ -749,8 +754,6 @@ def main():
                 location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
                 is_single_date = (start_date == end_date)
 
-                st.info(f"🔍 DEBUG: About to calculate health with {len(filtered)} rows, {len(location_cols)} sensors")
-
                 if is_single_date:
                     # Single Date View
                     st.markdown(f"### 📅 Sensor Status for {start_date.strftime('%B %d, %Y')}")
@@ -813,8 +816,20 @@ def main():
 
                 else:
                     # Date Range View
+                    total_days = (end_date - start_date).days + 1
+                    total_expected = READINGS_PER_DAY * total_days * len(location_cols)
+                    total_actual = len(filtered)
+
                     st.markdown(f"### 🔴 Sensor Health Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')})")
-                    st.caption(f"Analysis period: {(end_date - start_date).days + 1} days")
+                    st.caption(
+                        f"Analysis period: **{total_days} days** | "
+                        f"Data fetched: **{total_actual:,}** of **{total_expected:,}** expected timestamps "
+                        f"({total_actual/total_expected*100:.1f}% overall completeness)"
+                    )
+                    st.caption(
+                        "📊 Status based on data completeness: "
+                        "✅ Online (≥70%) | ⚠️ Degraded (40-70%) | ❌ Offline (<40%)"
+                    )
 
                     # Calculate health
                     health = get_sensor_health_date_range(filtered, start_date, end_date, location_cols)
@@ -851,37 +866,34 @@ def main():
                                 icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
                                 severities = {'ONLINE': 'Operational', 'DEGRADED': 'Monitor', 'OFFLINE': 'CRITICAL'}
 
-                                # Format issue dates
+                                # Format issue dates - ALWAYS show all dates
                                 issues_text = ""
                                 if h['offline_dates']:
-                                    if len(h['offline_dates']) <= 3:
-                                        issues_text = f"Offline: {', '.join([d.strftime('%b %d') for d in h['offline_dates']])}"
-                                    else:
-                                        issues_text = f"Offline: {len(h['offline_dates'])} days"
+                                    # Always list all dates, no truncation
+                                    dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
+                                    issues_text = f"Offline: {dates_str}"
                                 elif h['degraded_dates']:
-                                    if len(h['degraded_dates']) <= 3:
-                                        issues_text = f"Issues: {', '.join([d.strftime('%b %d') for d in h['degraded_dates']])}"
-                                    else:
-                                        issues_text = f"Issues: {len(h['degraded_dates'])} days"
+                                    dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
+                                    issues_text = f"Degraded: {dates_str}"
 
                                 with cols[j]:
                                     st.markdown(
                                         f"""
                                         <div style="background-color: {color['bg']}; border-left: 5px solid {color['border']};
-                                             border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 200px;
+                                             border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px;
                                              display: flex; flex-direction: column; justify-content: space-between;">
                                             <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
                                             <div style="font-size: 1.3rem; font-weight: bold; color: {color['text']};">
-                                                {icons[h['status']]} {h['status']} ({h['uptime_pct']:.0f}%)
+                                                {icons[h['status']]} {h['status']} ({h['completeness_pct']:.0f}%)
                                             </div>
                                             <div style="font-size: 0.9rem; color: #333;">
-                                                <strong>Uptime:</strong> {h['online_days']}/{h['total_days']} days
+                                                <strong>Days online:</strong> {h['online_days']}/{h['total_days']}
                                             </div>
                                             <div style="font-size: 0.85rem; color: #666;">
                                                 <strong>Readings:</strong> {h['total_readings']:,}/{h['expected_readings']:,}
                                             </div>
-                                            {f'<div style="font-size: 0.8rem; color: {color["text"]};">{issues_text}</div>' if issues_text else ''}
-                                            <div style="font-size: 0.8rem; font-weight: 600; color: {color['text']};">
+                                            {f'<div style="font-size: 0.75rem; color: {color["text"]}; margin-top: 0.25rem;">{issues_text}</div>' if issues_text else ''}
+                                            <div style="font-size: 0.8rem; font-weight: 600; color: {color['text']}; margin-top: 0.25rem;">
                                                 {severities[h['status']]}
                                             </div>
                                         </div>
