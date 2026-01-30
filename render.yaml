@@ -5,15 +5,15 @@ services:
     plan: free
     pythonVersion: 3.11.9
     buildCommand: pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0
+    startCommand: streamlit run streamlit_app.py --server.port $PORT --server.address 0.0.0.0
     envVars:
       - key: SUPABASE_URL
-        sync: false
+        value: https://tgznxzfdlxhxqwpohhyl.supabase.co
       - key: SUPABASE_ANON_KEY
-        sync: false
+        value: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRnem54emZkbHhoeHF3cG9oaHlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3NTQxMTgsImV4cCI6MjA2OTMzMDExOH0.FzoEYy49ZeAGxW7SLF0biuO3aMvc6vETwovRrfZEalU
       - key: SUPABASE_WIDE_VIEW
-        value: wide_view
+        value: wide_view_mv
       - key: APP_USERNAME
-        sync: false
+        value: afic
       - key: APP_PASSWORD
-        sync: false
+        value: Password3!
