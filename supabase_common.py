@@ -98,21 +98,37 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
     if not raw:
         return []
 
-    base_sgt = datetime.combine(day, dtime(0, 0), tzinfo=SGT)
     now_plus_1h_utc = datetime.now(timezone.utc) + timedelta(hours=1)
-
     rows: List[Dict[str, object]] = []
-    for i, item in enumerate(raw):
-        ts_sgt = base_sgt + timedelta(minutes=i)
-        ts_utc = ts_sgt.astimezone(timezone.utc)
+    
+    for item in raw:
+        # CRITICAL FIX: Use the actual timestamp from the API response
+        # The API provides timestamps in the "dt" field (UTC format)
+        try:
+            dt_str = item.get("dt")
+            if not dt_str:
+                continue
+            
+            # Parse the ISO timestamp from API
+            # Format: "2025-05-06T23:00:00.000Z"
+            ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        except Exception as e:
+            log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
+            continue
+        
+        # Skip future timestamps (safety check)
         if ts_utc > now_plus_1h_utc:
             continue
+        
+        # Extract the reading value
         value = None
         try:
             if item.get("reading") is not None:
                 value = float(item.get("reading"))
         except Exception:
             value = None
+        
+        # Build the row for Supabase
         rows.append({
             "location_id": loc["ID"],
             "location_name": loc["Name"],
@@ -120,6 +136,7 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
             "reading_datetime": ts_utc.isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
+    
     return rows
 
 
@@ -157,3 +174,4 @@ def yesterday_sgt() -> date:
     local Singapore days, not by UTC days.
     """
     return datetime.now(SGT).date() - timedelta(days=1)
+
