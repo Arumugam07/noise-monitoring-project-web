@@ -27,7 +27,7 @@ Why have a common file at all?
 import logging
 import os
 import time
-from datetime import datetime, timedelta, date, time as dtime, timezone
+from datetime import datetime, timedelta, date, timezone
 from typing import List, Dict
 
 import requests
@@ -35,19 +35,13 @@ from supabase import Client
 
 try:
     import zoneinfo  # py3.9+
-except ImportError:  # pragma: no cover
+except ImportError:
     from backports import zoneinfo
 
 SGT = zoneinfo.ZoneInfo("Asia/Singapore")
-"""Singapore Timezone object used for calendar-day calculations."""
-
 API_DEFAULT = "http://139.59.223.231:3000/api/meter-sound"
-"""Default base URL for the meter-sound API (can be overridden via env)."""
 
-# 13 device locations (ID + friendly name)
-# Each item is a small dictionary:
-# - "ID": the device identifier used by the API
-# - "Name": a human-readable label for dashboards/queries
+# 13 device locations
 LOCATIONS: List[Dict[str, str]] = [
     {"ID":"15490","Name":"Singapore Sports School"},
     {"ID":"16034","Name":"BLK 120 Serangoon North Ave 1"},
@@ -68,26 +62,11 @@ log = logging.getLogger("supabase-common")
 
 
 def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, object]]:
-    """Build per-minute rows for a Singapore calendar day for one location.
-
-    What it does (beginner version):
-    - Calls the API for the given device `loc["ID"]` and calendar `day` (in SGT).
-    - The API returns one reading per minute, starting at 00:00 SGT for that day.
-    - For each minute, we generate the exact timestamp in SGT, then convert to UTC
-      before storing (databases commonly use UTC for consistency).
-    - Skips any readings that look too far into the future (a small safety guard).
-
-    Parameters:
-    - api_base: The base URL of the API, without the trailing device id.
-    - loc: A dictionary like {"ID": "16034", "Name": "..."}.
-    - day: A Python date object representing the SGT calendar day to fetch.
-
-    Returns:
-    - A list of dictionaries, one per minute, each with these keys:
-      - location_id, location_name, reading_value, reading_datetime (UTC ISO string), created_at
-    """
+    """Build per-minute rows for a Singapore calendar day for one location."""
     url = f"{api_base}/{loc['ID']}?start={day.isoformat()}"
+    
     try:
+        log.debug(f"Fetching: {url}")
         r = requests.get(url, timeout=30)
         r.raise_for_status()
         raw = r.json()
@@ -96,21 +75,20 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
         return []
 
     if not raw:
+        log.debug(f"No data returned for {loc['ID']} on {day}")
         return []
 
     now_plus_1h_utc = datetime.now(timezone.utc) + timedelta(hours=1)
     rows: List[Dict[str, object]] = []
     
     for item in raw:
-        # CRITICAL FIX: Use the actual timestamp from the API response
-        # The API provides timestamps in the "dt" field (UTC format)
+        # Use the actual timestamp from the API response
         try:
             dt_str = item.get("dt")
             if not dt_str:
                 continue
             
-            # Parse the ISO timestamp from API
-            # Format: "2025-05-06T23:00:00.000Z"
+            # Parse the ISO timestamp from API (format: "2025-05-06T23:00:00.000Z")
             ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
         except Exception as e:
             log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
@@ -137,41 +115,39 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
     
+    log.debug(f"Built {len(rows)} rows for {loc['ID']} on {day}")
     return rows
 
 
 def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> int:
-    """Upsert rows into Supabase in safe chunks.
-
-    Why upsert?
-    - We want to run these jobs repeatedly without creating duplicates.
-    - The table has a composite unique key (location_id, reading_datetime), so
-      re-writing the same minute-row will update/replace it safely.
-
-    How it works:
-    - Splits the rows into ~1000-size chunks to avoid large payload errors.
-    - Uses `on_conflict="location_id,reading_datetime"` so duplicates are avoided.
-
-    Returns:
-    - An integer count of affected rows (inserted or updated) as a simple proxy.
-    """
+    """Upsert rows into Supabase in safe chunks."""
     if not rows:
         return 0
+    
     inserted = 0
     CHUNK = 1000
+    
     for i in range(0, len(rows), CHUNK):
         chunk = rows[i:i + CHUNK]
-        resp = supabase.table(table).upsert(chunk, on_conflict="location_id,reading_datetime").execute()
-        if isinstance(resp.data, list):
-            inserted += len(resp.data)
+        try:
+            resp = supabase.table(table).upsert(
+                chunk, 
+                on_conflict="location_id,reading_datetime"
+            ).execute()
+            
+            if isinstance(resp.data, list):
+                inserted += len(resp.data)
+                
+        except Exception as e:
+            log.error(f"Error upserting chunk {i}-{i+len(chunk)}: {e}")
+            # Continue with next chunk even if one fails
+            continue
+    
     return inserted
 
 
 def yesterday_sgt() -> date:
-    """Return yesterday's date in Singapore local time (SGT).
-
-    We use SGT calendar days because the source API organizes data by
-    local Singapore days, not by UTC days.
-    """
+    """Return yesterday's date in Singapore local time (SGT)."""
     return datetime.now(SGT).date() - timedelta(days=1)
+
 
