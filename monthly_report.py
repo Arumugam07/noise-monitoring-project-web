@@ -169,11 +169,17 @@ def generate_system_health_report(df, year, month):
         days_with_data = loc_data['date'].nunique() if not loc_data.empty else 0
         
         total_readings = len(loc_data)
+        
+        # Expected readings = theoretical maximum (1440 per day × 7 days)
+        # But we calculate completeness based on what's theoretically possible
         expected_readings = READINGS_PER_DAY * analysis_days
+        
+        # Calculate completeness percentage
         completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
         
-        # Cap at 100% - cannot exceed 100%
-        completeness_pct = min(completeness_pct, 100.0)
+        # Completeness can theoretically exceed 100% if there are duplicate timestamps
+        # or data quality issues, but we'll show the actual percentage
+        # and just flag it in status
         
         if completeness_pct >= 70:
             status = 'ONLINE'
