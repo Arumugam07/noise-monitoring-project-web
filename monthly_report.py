@@ -139,7 +139,6 @@ def detect_consecutive_offline_days(df, year, month):
                         'offline_start': offline_start,
                         'offline_end': offline_end,
                         'consecutive_days': consecutive_offline,
-                        'avg_completeness': 0  # Can calculate if needed
                     })
                     print(f"   ⚠️  {loc_name}: {consecutive_offline} days offline ({offline_start} to {offline_end})")
                 
@@ -155,7 +154,6 @@ def detect_consecutive_offline_days(df, year, month):
                 'offline_start': offline_start,
                 'offline_end': last_day,
                 'consecutive_days': consecutive_offline,
-                'avg_completeness': 0
             })
             print(f"   ⚠️  {loc_name}: {consecutive_offline} days offline ({offline_start} to {last_day})")
     
@@ -174,6 +172,7 @@ def generate_system_health_report(df, year, month):
     print("\n📊 Generating system health summary...")
     
     summary = []
+    critical_locations = []  # Locations below 40%
     
     for loc_id, loc_name in LOCATIONS.items():
         loc_data = df[df['location_id'] == loc_id]
@@ -189,6 +188,10 @@ def generate_system_health_report(df, year, month):
             status = 'DEGRADED'
         else:
             status = 'OFFLINE'
+            critical_locations.append({
+                'name': loc_name,
+                'completeness': completeness_pct
+            })
         
         summary.append({
             'Location': loc_name,
@@ -201,7 +204,7 @@ def generate_system_health_report(df, year, month):
     summary_df = pd.DataFrame(summary)
     print(summary_df.to_string(index=False))
     
-    return summary_df
+    return summary_df, critical_locations
 
 
 def detect_high_noise_incidents(df, min_db=80, min_duration=2):
@@ -282,7 +285,7 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
     return incidents_df
 
 
-def save_reports(health_df, incidents_df, offline_alerts, year, month):
+def save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month):
     """Save all reports as CSV files."""
     # Create reports directory
     os.makedirs("reports", exist_ok=True)
@@ -302,12 +305,49 @@ def save_reports(health_df, incidents_df, offline_alerts, year, month):
         incidents_df.to_csv(incidents_file, index=False)
         print(f"   ✅ {incidents_file}")
     
-    # 3. Offline alerts (if any)
+    # 3. Offline alerts (7+ days) - if any
     if offline_alerts:
         alerts_df = pd.DataFrame(offline_alerts)
         alerts_file = f"reports/offline_alerts_{month_str}.csv"
         alerts_df.to_csv(alerts_file, index=False)
         print(f"   ✅ {alerts_file}")
+    
+    # 4. Critical locations (below 40%) - if any
+    if critical_locations:
+        critical_df = pd.DataFrame(critical_locations)
+        critical_file = f"reports/critical_locations_{month_str}.csv"
+        critical_df.to_csv(critical_file, index=False)
+        print(f"   ✅ {critical_file}")
+
+
+def print_summary(offline_alerts, critical_locations, incidents_df):
+    """Print alert summary."""
+    print("\n" + "="*70)
+    print("🚨 ALERT SUMMARY")
+    print("="*70)
+    
+    has_alerts = False
+    
+    # 7+ day offline alerts
+    if offline_alerts:
+        has_alerts = True
+        print(f"\n⚠️  OFFLINE ALERTS (7+ Consecutive Days): {len(offline_alerts)}")
+        for alert in offline_alerts:
+            print(f"   • {alert['location_name']}")
+            print(f"     {alert['offline_start']} to {alert['offline_end']} ({alert['consecutive_days']} days)")
+    
+    # Below 40% completeness
+    if critical_locations:
+        has_alerts = True
+        print(f"\n🔴 CRITICAL LOCATIONS (Below 40% Completeness): {len(critical_locations)}")
+        for loc in critical_locations:
+            print(f"   • {loc['name']}: {loc['completeness']:.2f}%")
+    
+    if not has_alerts:
+        print("\n✅ NO ALERTS - All systems operational")
+    
+    print(f"\n📊 High Noise Incidents (≥80 dB, 2+ min): {len(incidents_df)}")
+    print("="*70)
 
 
 def main():
@@ -338,23 +378,29 @@ def main():
     offline_alerts = detect_consecutive_offline_days(df, year, month)
     
     # 3. Generate system health summary
-    health_df = generate_system_health_report(df, year, month)
+    health_df, critical_locations = generate_system_health_report(df, year, month)
     
     # 4. Detect high noise incidents (≥80 dB for 2+ min)
     incidents_df = detect_high_noise_incidents(df, min_db=80, min_duration=2)
     
     # 5. Save all reports
-    save_reports(health_df, incidents_df, offline_alerts, year, month)
+    save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month)
+    
+    # 6. Print summary
+    print_summary(offline_alerts, critical_locations, incidents_df)
     
     print(f"\n{'='*70}")
     print("✅ REPORT GENERATION COMPLETE")
     print(f"{'='*70}\n")
     
-    # 6. Summary
-    print("📋 Summary:")
-    print(f"   - Offline alerts: {len(offline_alerts)}")
-    print(f"   - High noise incidents: {len(incidents_df)}")
-    print(f"   - Reports saved to: reports/")
+    print("📋 Files Generated:")
+    print(f"   - reports/system_health_{year}-{month:02d}.csv")
+    if not incidents_df.empty:
+        print(f"   - reports/high_noise_incidents_{year}-{month:02d}.csv")
+    if offline_alerts:
+        print(f"   - reports/offline_alerts_{year}-{month:02d}.csv")
+    if critical_locations:
+        print(f"   - reports/critical_locations_{year}-{month:02d}.csv")
     print()
 
 
