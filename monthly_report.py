@@ -165,22 +165,26 @@ def generate_system_health_report(df, year, month):
     for loc_id, loc_name in LOCATIONS.items():
         loc_data = df_period[df_period['location_id'] == loc_id]
         
-        # Calculate days online in the 7-day period
-        days_with_data = loc_data['date'].nunique() if not loc_data.empty else 0
+        # CRITICAL FIX: Only count rows with actual readings (not null/None)
+        # Filter out null readings to match Streamlit app behavior
+        loc_data_valid = loc_data[loc_data['reading_value'].notna()]
         
-        total_readings = len(loc_data)
+        # Calculate days online using only valid readings
+        if not loc_data_valid.empty:
+            days_with_data = pd.to_datetime(loc_data_valid['reading_datetime']).dt.date.nunique()
+        else:
+            days_with_data = 0
+        
+        # Count only actual valid readings (excludes None/null values)
+        total_readings = len(loc_data_valid)
         
         # Expected readings = theoretical maximum (1440 per day × 7 days)
-        # But we calculate completeness based on what's theoretically possible
         expected_readings = READINGS_PER_DAY * analysis_days
         
         # Calculate completeness percentage
         completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
         
-        # Completeness can theoretically exceed 100% if there are duplicate timestamps
-        # or data quality issues, but we'll show the actual percentage
-        # and just flag it in status
-        
+        # Determine status based on completeness
         if completeness_pct >= 70:
             status = 'ONLINE'
         elif completeness_pct >= 40:
