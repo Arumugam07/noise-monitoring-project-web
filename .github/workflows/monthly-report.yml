@@ -38,4 +38,3 @@ jobs:
         name: monthly-noise-reports
         path: reports/
         retention-days: 90
-
