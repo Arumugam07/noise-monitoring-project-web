@@ -148,26 +148,32 @@ def detect_consecutive_offline_days(df, year, month):
 
 
 def generate_system_health_report(df, year, month):
-    """Generate monthly system health summary."""
-    first_day = date(year, month, 1)
+    """Generate system health summary for LAST 7 DAYS of the month."""
     last_day = date(year, month, monthrange(year, month)[1])
-    total_days = (last_day - first_day).days + 1
+    first_day_of_period = last_day - timedelta(days=6)  # Last 7 days
+    analysis_days = 7
     
-    print("\n📊 Generating system health summary...")
+    print(f"\n📊 Generating system health summary (Last 7 days: {first_day_of_period} to {last_day})...")
     
     summary = []
     critical_locations = []
     
+    # Filter data to last 7 days only
+    df['date'] = pd.to_datetime(df['reading_datetime']).dt.date
+    df_period = df[(df['date'] >= first_day_of_period) & (df['date'] <= last_day)]
+    
     for loc_id, loc_name in LOCATIONS.items():
-        loc_data = df[df['location_id'] == loc_id]
-        loc_data['date'] = pd.to_datetime(loc_data['reading_datetime']).dt.date
+        loc_data = df_period[df_period['location_id'] == loc_id]
         
-        # Calculate days online (any day with readings counts as online)
-        days_with_data = loc_data['date'].nunique()
+        # Calculate days online in the 7-day period
+        days_with_data = loc_data['date'].nunique() if not loc_data.empty else 0
         
         total_readings = len(loc_data)
-        expected_readings = READINGS_PER_DAY * total_days
+        expected_readings = READINGS_PER_DAY * analysis_days
         completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
+        
+        # Cap at 100% - cannot exceed 100%
+        completeness_pct = min(completeness_pct, 100.0)
         
         if completeness_pct >= 70:
             status = 'ONLINE'
@@ -179,13 +185,15 @@ def generate_system_health_report(df, year, month):
                 'name': loc_name,
                 'completeness': completeness_pct,
                 'days_online': days_with_data,
-                'total_days': total_days
+                'total_days': analysis_days,
+                'period_start': first_day_of_period,
+                'period_end': last_day
             })
         
         summary.append({
             'Location': loc_name,
             'Days_Online': days_with_data,
-            'Total_Days': total_days,
+            'Total_Days': analysis_days,
             'Total_Readings': total_readings,
             'Expected_Readings': expected_readings,
             'Completeness_%': round(completeness_pct, 2),
@@ -195,7 +203,7 @@ def generate_system_health_report(df, year, month):
     summary_df = pd.DataFrame(summary)
     print(summary_df.to_string(index=False))
     
-    return summary_df, critical_locations
+    return summary_df, critical_locations, first_day_of_period, last_day
 
 
 def detect_high_noise_incidents(df, min_db=80, min_duration=2):
@@ -264,12 +272,13 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
     return incidents_df
 
 
-def generate_html_report(health_df, offline_alerts, critical_locations, incidents_df, year, month):
+def generate_html_report(health_df, offline_alerts, critical_locations, incidents_df, year, month, health_period_start, health_period_end):
     """Generate visual HTML report matching Streamlit app design."""
     month_str = f"{year}-{month:02d}"
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
-    total_days = (last_day - first_day).days + 1
+    total_days_month = (last_day - first_day).days + 1
+    health_days = (health_period_end - health_period_start).days + 1
     
     # Count statuses
     online_count = len(health_df[health_df['Status'] == 'ONLINE'])
@@ -431,17 +440,28 @@ def generate_html_report(health_df, offline_alerts, critical_locations, incident
             margin-top: 40px;
             padding: 20px;
         }}
+        .period-note {{
+            background: #e7f3ff;
+            border-left: 4px solid #2196F3;
+            padding: 10px 15px;
+            margin: 15px 0;
+            border-radius: 4px;
+        }}
     </style>
 </head>
 <body>
     <div class="header">
         <h1>🔊 Noise Monitoring System - Monthly Report</h1>
-        <p><strong>Period:</strong> {first_day.strftime('%B %d, %Y')} - {last_day.strftime('%B %d, %Y')} ({total_days} days)</p>
+        <p><strong>Full Period:</strong> {first_day.strftime('%B %d, %Y')} - {last_day.strftime('%B %d, %Y')} ({total_days_month} days)</p>
         <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S SGT')}</p>
     </div>
     
     <div class="summary">
-        <h2>📊 Overall System Health: {system_health_pct:.0f}%</h2>
+        <h2>🔴 Sensor Health Summary (Last {health_days} Days)</h2>
+        <div class="period-note">
+            <strong>📅 Analysis Period:</strong> {health_period_start.strftime('%B %d, %Y')} - {health_period_end.strftime('%B %d, %Y')}
+        </div>
+        <h3>📊 Overall System Health: {system_health_pct:.0f}%</h3>
         <div class="stats">
             <div class="stat-card">
                 <div class="stat-value" style="color: #28a745;">✅ {online_count}</div>
@@ -456,7 +476,7 @@ def generate_html_report(health_df, offline_alerts, critical_locations, incident
                 <div class="stat-label">Critical</div>
             </div>
         </div>
-        <p><strong>Total Readings:</strong> {total_readings:,} of {expected_readings:,} ({total_readings/expected_readings*100:.1f}%)</p>
+        <p><strong>Total Readings (Last {health_days} days):</strong> {total_readings:,} of {expected_readings:,} ({total_readings/expected_readings*100:.1f}%)</p>
         <p><strong>Status Legend:</strong> ✅ Online (≥70%) | ⚠️ Degraded (40-70%) | ❌ Offline (<40%)</p>
     </div>
 """
@@ -490,28 +510,39 @@ def generate_html_report(health_df, offline_alerts, critical_locations, incident
 """
         html += "    </div>\n"
     
-    # Sensor health cards
-    html += """
+    # Sensor health cards - ONLY show if there are critical locations (below 40%)
+    if critical_locations:
+        html += """
     <div class="summary">
-        <h2>🔴 Sensor Health Details</h2>
+        <h2>🔴 Critical Sensor Health Details (Below 40%)</h2>
         <div class="sensor-grid">
 """
-    
-    for _, row in health_df.iterrows():
-        status = row['Status'].lower()
-        status_icon = {'online': '✅', 'degraded': '⚠️', 'offline': '❌'}[status]
         
-        html += f"""
-            <div class="sensor-card {status}">
-                <div class="sensor-name">📍 {row['Location']}</div>
-                <div class="sensor-status {status}">{status_icon} {row['Status']} ({row['Completeness_%']:.0f}%)</div>
-                <div class="sensor-details">Days online: {row['Days_Online']}/{row['Total_Days']}</div>
-                <div class="sensor-details">Readings: {row['Total_Readings']:,}/{row['Expected_Readings']:,}</div>
+        # Only show locations that are actually critical (below 40%)
+        for loc in critical_locations:
+            # Find the full details from health_df
+            loc_row = health_df[health_df['Location'] == loc['name']].iloc[0]
+            
+            html += f"""
+            <div class="sensor-card offline">
+                <div class="sensor-name">📍 {loc['name']}</div>
+                <div class="sensor-status offline">❌ OFFLINE ({loc['completeness']:.0f}%)</div>
+                <div class="sensor-details">Days online: {loc['days_online']}/{loc['total_days']}</div>
+                <div class="sensor-details">Readings: {loc_row['Total_Readings']:,}/{loc_row['Expected_Readings']:,}</div>
+                <div class="sensor-details" style="color: #721c24; font-weight: 600; margin-top: 10px;">⚠️ REQUIRES MAINTENANCE</div>
             </div>
 """
-    
-    html += """
+        
+        html += """
         </div>
+    </div>
+"""
+    else:
+        # All systems operational - show simple message
+        html += """
+    <div class="summary" style="background: #d4edda; border-left: 5px solid #28a745;">
+        <h2 style="color: #155724;">✅ All Sensors Operational</h2>
+        <p style="color: #155724; font-size: 1.1rem;">All 13 monitoring locations are functioning normally with completeness above 40%. No maintenance required.</p>
     </div>
 """
     
@@ -562,7 +593,7 @@ def generate_html_report(health_df, offline_alerts, critical_locations, incident
     return html
 
 
-def save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month):
+def save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month, health_period_start, health_period_end):
     """Save all reports."""
     os.makedirs("reports", exist_ok=True)
     
@@ -596,7 +627,7 @@ def save_reports(health_df, incidents_df, offline_alerts, critical_locations, ye
         print(f"   ✅ {critical_file}")
     
     # 5. HTML visual report
-    html_content = generate_html_report(health_df, offline_alerts, critical_locations, incidents_df, year, month)
+    html_content = generate_html_report(health_df, offline_alerts, critical_locations, incidents_df, year, month, health_period_start, health_period_end)
     html_file = f"reports/monthly_report_{month_str}.html"
     with open(html_file, 'w', encoding='utf-8') as f:
         f.write(html_content)
@@ -653,10 +684,10 @@ def main():
         return
     
     offline_alerts = detect_consecutive_offline_days(df, year, month)
-    health_df, critical_locations = generate_system_health_report(df, year, month)
+    health_df, critical_locations, health_period_start, health_period_end = generate_system_health_report(df, year, month)
     incidents_df = detect_high_noise_incidents(df, min_db=80, min_duration=2)
     
-    save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month)
+    save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month, health_period_start, health_period_end)
     print_summary(offline_alerts, critical_locations, incidents_df)
     
     print(f"\n{'='*70}")
