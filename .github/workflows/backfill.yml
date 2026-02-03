@@ -27,7 +27,7 @@ jobs:
         echo "SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRnem54emZkbHhoeHF3cG9oaHlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3NTQxMTgsImV4cCI6MjA2OTMzMDExOH0.FzoEYy49ZeAGxW7SLF0biuO3aMvc6vETwovRrfZEalU" >> .env
         echo "API_BASE_URL=http://139.59.223.231:3000/api/meter-sound" >> .env
         echo "SUPABASE_TABLE=meter_readings" >> .env
-        echo "EMPTY_CHUNKS_TO_STOP=7" >> .env
+        echo "EMPTY_CHUNKS_TO_STOP=30" >> .env
         echo "BACKFILL_MAX_YEARS=1" >> .env
     
     - name: Run backfill script
