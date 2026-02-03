@@ -1,14 +1,11 @@
 #!/usr/bin/env python3
 """
-Monthly Noise Monitoring Report Generator
+Monthly Noise Monitoring Report Generator with HTML Visual Reports
 
-Automated Features:
-1. Alert if any location is offline 7+ consecutive days (below 40% completeness)
-2. Generate system health summary CSV for the month
-3. Detect high noise incidents (≥80 dB for 2+ minutes)
-
-Usage: python monthly_report.py [year] [month]
-Example: python monthly_report.py 2026 1  # For January 2026
+Generates:
+1. CSV reports (system health, incidents, alerts)
+2. HTML visual report matching the Streamlit app design
+3. Only flags issues: 7+ consecutive offline days OR <40% health
 """
 
 import os
@@ -22,7 +19,6 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
-# Supabase configuration
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
 
@@ -32,7 +28,6 @@ if not SUPABASE_URL or not SUPABASE_KEY:
 
 supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Location mapping (same as your streamlit_app.py)
 LOCATIONS = {
     "15490": "Singapore Sports School",
     "16034": "BLK 120 Serangoon North Ave 1",
@@ -49,8 +44,8 @@ LOCATIONS = {
     "16005": "Woodlands 11",
 }
 
-READINGS_PER_DAY = 1440  # 60 readings/hour × 24 hours
-OFFLINE_THRESHOLD = 0.40  # 40% completeness
+READINGS_PER_DAY = 1440
+OFFLINE_THRESHOLD = 0.40
 
 
 def fetch_month_data(year, month):
@@ -74,7 +69,6 @@ def fetch_month_data(year, month):
                 .execute()
             
             batch = resp.data or []
-            
             if not batch:
                 break
             
@@ -95,10 +89,7 @@ def fetch_month_data(year, month):
 
 
 def detect_consecutive_offline_days(df, year, month):
-    """
-    Detect locations that were offline for 7+ consecutive days.
-    Offline = less than 40% of expected readings per day.
-    """
+    """Detect locations offline for 7+ consecutive days."""
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
     
@@ -107,14 +98,11 @@ def detect_consecutive_offline_days(df, year, month):
     alerts = []
     
     for loc_id, loc_name in LOCATIONS.items():
-        # Filter data for this location
         loc_data = df[df['location_id'] == loc_id].copy()
         loc_data['date'] = pd.to_datetime(loc_data['reading_datetime']).dt.date
         
-        # Count readings per day
         daily_counts = loc_data.groupby('date').size().to_dict()
         
-        # Track consecutive offline days
         consecutive_offline = 0
         offline_start = None
         
@@ -125,12 +113,10 @@ def detect_consecutive_offline_days(df, year, month):
             completeness = (day_count / READINGS_PER_DAY) if READINGS_PER_DAY > 0 else 0
             
             if completeness < OFFLINE_THRESHOLD:
-                # This day is offline
                 if consecutive_offline == 0:
                     offline_start = single_date
                 consecutive_offline += 1
             else:
-                # This day is online - check if previous streak was 7+ days
                 if consecutive_offline >= 7:
                     offline_end = single_date - timedelta(days=1)
                     alerts.append({
@@ -142,11 +128,9 @@ def detect_consecutive_offline_days(df, year, month):
                     })
                     print(f"   ⚠️  {loc_name}: {consecutive_offline} days offline ({offline_start} to {offline_end})")
                 
-                # Reset counter
                 consecutive_offline = 0
                 offline_start = None
         
-        # Check if still offline at end of month
         if consecutive_offline >= 7:
             alerts.append({
                 'location_id': loc_id,
@@ -164,7 +148,7 @@ def detect_consecutive_offline_days(df, year, month):
 
 
 def generate_system_health_report(df, year, month):
-    """Generate monthly system health summary for all locations."""
+    """Generate monthly system health summary."""
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
     total_days = (last_day - first_day).days + 1
@@ -172,16 +156,19 @@ def generate_system_health_report(df, year, month):
     print("\n📊 Generating system health summary...")
     
     summary = []
-    critical_locations = []  # Locations below 40%
+    critical_locations = []
     
     for loc_id, loc_name in LOCATIONS.items():
         loc_data = df[df['location_id'] == loc_id]
+        loc_data['date'] = pd.to_datetime(loc_data['reading_datetime']).dt.date
+        
+        # Calculate days online (any day with readings counts as online)
+        days_with_data = loc_data['date'].nunique()
         
         total_readings = len(loc_data)
         expected_readings = READINGS_PER_DAY * total_days
         completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
         
-        # Determine status
         if completeness_pct >= 70:
             status = 'ONLINE'
         elif completeness_pct >= 40:
@@ -190,11 +177,15 @@ def generate_system_health_report(df, year, month):
             status = 'OFFLINE'
             critical_locations.append({
                 'name': loc_name,
-                'completeness': completeness_pct
+                'completeness': completeness_pct,
+                'days_online': days_with_data,
+                'total_days': total_days
             })
         
         summary.append({
             'Location': loc_name,
+            'Days_Online': days_with_data,
+            'Total_Days': total_days,
             'Total_Readings': total_readings,
             'Expected_Readings': expected_readings,
             'Completeness_%': round(completeness_pct, 2),
@@ -208,13 +199,7 @@ def generate_system_health_report(df, year, month):
 
 
 def detect_high_noise_incidents(df, min_db=80, min_duration=2):
-    """
-    Detect sustained high noise incidents.
-    
-    Parameters:
-    - min_db: Minimum decibel level (default: 80)
-    - min_duration: Minimum consecutive minutes (default: 2)
-    """
+    """Detect sustained high noise incidents."""
     print(f"\n🔊 Detecting noise ≥{min_db} dB for {min_duration}+ minutes...")
     
     df_sorted = df.sort_values(['location_id', 'reading_datetime']).copy()
@@ -233,7 +218,6 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
             value = row.get('reading_value')
             
             if pd.notna(value) and value >= min_db:
-                # High noise - continue or start incident
                 if current_incident is None:
                     current_incident = {
                         'location_name': loc_name,
@@ -243,9 +227,7 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
                 else:
                     incident_values.append(value)
             else:
-                # Below threshold or no data - check if incident should be recorded
                 if current_incident and len(incident_values) >= min_duration:
-                    # Get previous row's timestamp as end time
                     prev_idx = loc_data.index.get_loc(idx) - 1
                     prev_row = loc_data.iloc[prev_idx]
                     
@@ -258,11 +240,9 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
                         'Average_dB': round(sum(incident_values) / len(incident_values), 2)
                     })
                 
-                # Reset
                 current_incident = None
                 incident_values = []
         
-        # Check for ongoing incident at end
         if current_incident and len(incident_values) >= min_duration:
             last_row = loc_data.iloc[-1]
             incidents.append({
@@ -278,46 +258,349 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
     
     if not incidents_df.empty:
         print(f"   ⚠️  Found {len(incidents_df)} incidents")
-        print(f"\n{incidents_df.head(10).to_string(index=False)}")
     else:
         print("   ✅ No high noise incidents detected")
     
     return incidents_df
 
 
+def generate_html_report(health_df, offline_alerts, critical_locations, incidents_df, year, month):
+    """Generate visual HTML report matching Streamlit app design."""
+    month_str = f"{year}-{month:02d}"
+    first_day = date(year, month, 1)
+    last_day = date(year, month, monthrange(year, month)[1])
+    total_days = (last_day - first_day).days + 1
+    
+    # Count statuses
+    online_count = len(health_df[health_df['Status'] == 'ONLINE'])
+    degraded_count = len(health_df[health_df['Status'] == 'DEGRADED'])
+    offline_count = len(health_df[health_df['Status'] == 'OFFLINE'])
+    
+    total_readings = health_df['Total_Readings'].sum()
+    expected_readings = health_df['Expected_Readings'].sum()
+    system_health_pct = (online_count / len(health_df) * 100) if len(health_df) > 0 else 0
+    
+    html = f"""
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>Noise Monitoring Report - {month_str}</title>
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            margin: 0;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }}
+        .header {{
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+        }}
+        .header h1 {{
+            margin: 0 0 10px 0;
+            font-size: 2rem;
+        }}
+        .header p {{
+            margin: 5px 0;
+            opacity: 0.9;
+        }}
+        .summary {{
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }}
+        .summary h2 {{
+            margin-top: 0;
+            color: #333;
+        }}
+        .stats {{
+            display: flex;
+            gap: 20px;
+            margin: 20px 0;
+        }}
+        .stat-card {{
+            flex: 1;
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }}
+        .stat-value {{
+            font-size: 2rem;
+            font-weight: bold;
+            color: #667eea;
+        }}
+        .stat-label {{
+            color: #666;
+            margin-top: 5px;
+        }}
+        .sensor-grid {{
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin: 20px 0;
+        }}
+        .sensor-card {{
+            background: white;
+            border-radius: 8px;
+            padding: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            border-left: 5px solid;
+        }}
+        .sensor-card.online {{
+            border-left-color: #28a745;
+            background-color: #d4edda;
+        }}
+        .sensor-card.degraded {{
+            border-left-color: #ffc107;
+            background-color: #fff3cd;
+        }}
+        .sensor-card.offline {{
+            border-left-color: #dc3545;
+            background-color: #f8d7da;
+        }}
+        .sensor-name {{
+            font-weight: 600;
+            margin-bottom: 10px;
+            color: #333;
+        }}
+        .sensor-status {{
+            font-size: 1.5rem;
+            font-weight: bold;
+            margin: 10px 0;
+        }}
+        .sensor-status.online {{
+            color: #155724;
+        }}
+        .sensor-status.degraded {{
+            color: #856404;
+        }}
+        .sensor-status.offline {{
+            color: #721c24;
+        }}
+        .sensor-details {{
+            font-size: 0.9rem;
+            color: #666;
+            margin: 5px 0;
+        }}
+        .alert-section {{
+            background: #fff3cd;
+            border-left: 5px solid #ffc107;
+            padding: 20px;
+            border-radius: 8px;
+            margin: 20px 0;
+        }}
+        .alert-section h3 {{
+            margin-top: 0;
+            color: #856404;
+        }}
+        .alert-item {{
+            background: white;
+            padding: 15px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }}
+        table {{
+            width: 100%;
+            border-collapse: collapse;
+            background: white;
+            margin: 20px 0;
+        }}
+        th, td {{
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid #ddd;
+        }}
+        th {{
+            background: #667eea;
+            color: white;
+            font-weight: 600;
+        }}
+        tr:hover {{
+            background: #f5f5f5;
+        }}
+        .footer {{
+            text-align: center;
+            color: #666;
+            margin-top: 40px;
+            padding: 20px;
+        }}
+    </style>
+</head>
+<body>
+    <div class="header">
+        <h1>🔊 Noise Monitoring System - Monthly Report</h1>
+        <p><strong>Period:</strong> {first_day.strftime('%B %d, %Y')} - {last_day.strftime('%B %d, %Y')} ({total_days} days)</p>
+        <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S SGT')}</p>
+    </div>
+    
+    <div class="summary">
+        <h2>📊 Overall System Health: {system_health_pct:.0f}%</h2>
+        <div class="stats">
+            <div class="stat-card">
+                <div class="stat-value" style="color: #28a745;">✅ {online_count}</div>
+                <div class="stat-label">Operational</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: #ffc107;">⚠️ {degraded_count}</div>
+                <div class="stat-label">Degraded</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value" style="color: #dc3545;">❌ {offline_count}</div>
+                <div class="stat-label">Critical</div>
+            </div>
+        </div>
+        <p><strong>Total Readings:</strong> {total_readings:,} of {expected_readings:,} ({total_readings/expected_readings*100:.1f}%)</p>
+        <p><strong>Status Legend:</strong> ✅ Online (≥70%) | ⚠️ Degraded (40-70%) | ❌ Offline (<40%)</p>
+    </div>
+"""
+    
+    # Alerts section
+    if offline_alerts or critical_locations:
+        html += """
+    <div class="alert-section">
+        <h3>🚨 CRITICAL ALERTS DETECTED</h3>
+"""
+        if offline_alerts:
+            html += f"<h4>⚠️ Locations Offline 7+ Consecutive Days: {len(offline_alerts)}</h4>"
+            for alert in offline_alerts:
+                html += f"""
+        <div class="alert-item">
+            <strong>📍 {alert['location_name']}</strong><br>
+            Offline Period: {alert['offline_start']} to {alert['offline_end']}<br>
+            Duration: {alert['consecutive_days']} consecutive days
+        </div>
+"""
+        
+        if critical_locations:
+            html += f"<h4>🔴 Locations Below 40% Health: {len(critical_locations)}</h4>"
+            for loc in critical_locations:
+                html += f"""
+        <div class="alert-item">
+            <strong>📍 {loc['name']}</strong><br>
+            Completeness: {loc['completeness']:.2f}%<br>
+            Days Online: {loc['days_online']}/{loc['total_days']} days
+        </div>
+"""
+        html += "    </div>\n"
+    
+    # Sensor health cards
+    html += """
+    <div class="summary">
+        <h2>🔴 Sensor Health Details</h2>
+        <div class="sensor-grid">
+"""
+    
+    for _, row in health_df.iterrows():
+        status = row['Status'].lower()
+        status_icon = {'online': '✅', 'degraded': '⚠️', 'offline': '❌'}[status]
+        
+        html += f"""
+            <div class="sensor-card {status}">
+                <div class="sensor-name">📍 {row['Location']}</div>
+                <div class="sensor-status {status}">{status_icon} {row['Status']} ({row['Completeness_%']:.0f}%)</div>
+                <div class="sensor-details">Days online: {row['Days_Online']}/{row['Total_Days']}</div>
+                <div class="sensor-details">Readings: {row['Total_Readings']:,}/{row['Expected_Readings']:,}</div>
+            </div>
+"""
+    
+    html += """
+        </div>
+    </div>
+"""
+    
+    # High noise incidents
+    if not incidents_df.empty:
+        html += f"""
+    <div class="summary">
+        <h2>🔊 High Noise Incidents (≥80 dB, 2+ minutes): {len(incidents_df)}</h2>
+        <table>
+            <thead>
+                <tr>
+                    <th>Location</th>
+                    <th>Start Time</th>
+                    <th>Duration (min)</th>
+                    <th>Peak dB</th>
+                    <th>Average dB</th>
+                </tr>
+            </thead>
+            <tbody>
+"""
+        for _, incident in incidents_df.head(50).iterrows():
+            html += f"""
+                <tr>
+                    <td>{incident['Location']}</td>
+                    <td>{incident['Start_Time']}</td>
+                    <td>{incident['Duration_Minutes']}</td>
+                    <td>{incident['Peak_dB']}</td>
+                    <td>{incident['Average_dB']}</td>
+                </tr>
+"""
+        html += """
+            </tbody>
+        </table>
+"""
+        if len(incidents_df) > 50:
+            html += f"        <p><em>Showing first 50 of {len(incidents_df)} incidents. See CSV file for complete list.</em></p>\n"
+        html += "    </div>\n"
+    
+    html += """
+    <div class="footer">
+        <p>RSAF Noise Monitoring System | Automated Monthly Report</p>
+        <p>For technical support, please contact the system administrator</p>
+    </div>
+</body>
+</html>
+"""
+    
+    return html
+
+
 def save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month):
-    """Save all reports as CSV files."""
-    # Create reports directory
+    """Save all reports."""
     os.makedirs("reports", exist_ok=True)
     
     month_str = f"{year}-{month:02d}"
     
     print(f"\n💾 Saving reports...")
     
-    # 1. System health report
+    # 1. System health CSV
     health_file = f"reports/system_health_{month_str}.csv"
     health_df.to_csv(health_file, index=False)
     print(f"   ✅ {health_file}")
     
-    # 2. High noise incidents
+    # 2. High noise incidents CSV
     if not incidents_df.empty:
         incidents_file = f"reports/high_noise_incidents_{month_str}.csv"
         incidents_df.to_csv(incidents_file, index=False)
         print(f"   ✅ {incidents_file}")
     
-    # 3. Offline alerts (7+ days) - if any
+    # 3. Offline alerts CSV
     if offline_alerts:
         alerts_df = pd.DataFrame(offline_alerts)
         alerts_file = f"reports/offline_alerts_{month_str}.csv"
         alerts_df.to_csv(alerts_file, index=False)
         print(f"   ✅ {alerts_file}")
     
-    # 4. Critical locations (below 40%) - if any
+    # 4. Critical locations CSV
     if critical_locations:
         critical_df = pd.DataFrame(critical_locations)
         critical_file = f"reports/critical_locations_{month_str}.csv"
         critical_df.to_csv(critical_file, index=False)
         print(f"   ✅ {critical_file}")
+    
+    # 5. HTML visual report
+    html_content = generate_html_report(health_df, offline_alerts, critical_locations, incidents_df, year, month)
+    html_file = f"reports/monthly_report_{month_str}.html"
+    with open(html_file, 'w', encoding='utf-8') as f:
+        f.write(html_content)
+    print(f"   ✅ {html_file} (Visual Report)")
 
 
 def print_summary(offline_alerts, critical_locations, incidents_df):
@@ -328,7 +611,6 @@ def print_summary(offline_alerts, critical_locations, incidents_df):
     
     has_alerts = False
     
-    # 7+ day offline alerts
     if offline_alerts:
         has_alerts = True
         print(f"\n⚠️  OFFLINE ALERTS (7+ Consecutive Days): {len(offline_alerts)}")
@@ -336,7 +618,6 @@ def print_summary(offline_alerts, critical_locations, incidents_df):
             print(f"   • {alert['location_name']}")
             print(f"     {alert['offline_start']} to {alert['offline_end']} ({alert['consecutive_days']} days)")
     
-    # Below 40% completeness
     if critical_locations:
         has_alerts = True
         print(f"\n🔴 CRITICAL LOCATIONS (Below 40% Completeness): {len(critical_locations)}")
@@ -351,13 +632,11 @@ def print_summary(offline_alerts, critical_locations, incidents_df):
 
 
 def main():
-    """Main function to generate monthly report."""
-    # Determine which month to process
+    """Main function."""
     if len(sys.argv) >= 3:
         year = int(sys.argv[1])
         month = int(sys.argv[2])
     else:
-        # Default: last month
         today = datetime.now()
         last_month = today.replace(day=1) - timedelta(days=1)
         year = last_month.year
@@ -367,26 +646,17 @@ def main():
     print(f"🔊 MONTHLY NOISE MONITORING REPORT - {year}-{month:02d}")
     print(f"{'='*70}")
     
-    # 1. Fetch data
     df = fetch_month_data(year, month)
     
     if df.empty:
         print("\n❌ No data found for this month")
         return
     
-    # 2. Detect 7+ day offline periods
     offline_alerts = detect_consecutive_offline_days(df, year, month)
-    
-    # 3. Generate system health summary
     health_df, critical_locations = generate_system_health_report(df, year, month)
-    
-    # 4. Detect high noise incidents (≥80 dB for 2+ min)
     incidents_df = detect_high_noise_incidents(df, min_db=80, min_duration=2)
     
-    # 5. Save all reports
     save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month)
-    
-    # 6. Print summary
     print_summary(offline_alerts, critical_locations, incidents_df)
     
     print(f"\n{'='*70}")
@@ -394,6 +664,7 @@ def main():
     print(f"{'='*70}\n")
     
     print("📋 Files Generated:")
+    print(f"   - reports/monthly_report_{year}-{month:02d}.html (📊 VISUAL REPORT)")
     print(f"   - reports/system_health_{year}-{month:02d}.csv")
     if not incidents_df.empty:
         print(f"   - reports/high_noise_incidents_{year}-{month:02d}.csv")
