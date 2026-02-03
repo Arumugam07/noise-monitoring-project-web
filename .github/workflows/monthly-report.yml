@@ -1,0 +1,41 @@
+name: Monthly Noise Report
+
+on:
+  schedule:
+    # Run on 1st of every month at 2 AM Singapore time (6 PM UTC previous day)
+    - cron: '0 18 1 * *'
+  workflow_dispatch:  # Allows manual trigger for testing
+
+jobs:
+  generate-report:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+    
+    - name: Install dependencies
+      run: |
+        pip install -r requirements.txt
+    
+    - name: Create environment file
+      run: |
+        echo "SUPABASE_URL=https://tgznxzfdlxhxqwpohhyl.supabase.co" >> .env
+        echo "SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRnem54emZkbHhoeHF3cG9oaHlsIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTM3NTQxMTgsImV4cCI6MjA2OTMzMDExOH0.FzoEYy49ZeAGxW7SLF0biuO3aMvc6vETwovRrfZEalU" >> .env
+    
+    - name: Generate monthly report
+      run: |
+        python monthly_report.py
+    
+    - name: Upload reports as artifacts
+      uses: actions/upload-artifact@v3
+      with:
+        name: monthly-noise-reports
+        path: reports/
+        retention-days: 90
+
