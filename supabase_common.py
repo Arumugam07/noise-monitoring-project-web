@@ -91,8 +91,6 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
         # Parse the ISO timestamp from API (format: "2025-05-06T23:00:00.000Z")
         ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
         
-        # TRUNCATE to minute level (remove seconds and microseconds)
-        ts_utc = ts_utc.replace(second=0, microsecond=0)
         
     except Exception as e:
         log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
@@ -153,6 +151,7 @@ def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> 
 def yesterday_sgt() -> date:
     """Return yesterday's date in Singapore local time (SGT)."""
     return datetime.now(SGT).date() - timedelta(days=1)
+
 
 
 
