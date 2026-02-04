@@ -776,8 +776,8 @@ def main():
         st.sidebar.info("Pagination disabled when value filters are active")
 
     if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
+        st.cache_data.clear()
+        st.rerun()
 
     # Main content
     st.markdown('<div class="main-header">🔊 Noise Monitoring System</div>', unsafe_allow_html=True)
@@ -1306,6 +1306,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
