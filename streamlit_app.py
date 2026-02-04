@@ -613,6 +613,9 @@ def main():
     if not st.session_state.get("auth", False):
         show_login_page()
         st.stop()
+
+    # TEMPORARY: Force clear cache on every load
+    st.cache_data.clear()
     
     # Logout button in sidebar after login
     st.sidebar.markdown("---")
@@ -1306,6 +1309,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
