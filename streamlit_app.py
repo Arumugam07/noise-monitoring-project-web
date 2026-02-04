@@ -1266,7 +1266,7 @@ def main():
             CREATE MATERIALIZED VIEW public.wide_view_mv AS
             SELECT 
               DATE(reading_datetime) as "Date",
-              TIME(reading_datetime) as "Time",
+              DATE_TRUNC('minute', reading_datetime)::time as "Time",  -- FIXED: Truncate to minute
               MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
               MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
               MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
@@ -1281,7 +1281,7 @@ def main():
               MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
               MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
             FROM public.meter_readings
-            GROUP BY DATE(reading_datetime), TIME(reading_datetime);
+            GROUP BY DATE(reading_datetime), DATE_TRUNC('minute', reading_datetime);
 
             CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
             
@@ -1301,6 +1301,9 @@ def main():
         
         st.error(f"**Technical Error:** {str(e)}")
 
+
+if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
+    st.rerun()
 # Add this near the top of your main() function, after the login check
 if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
     st.cache_data.clear()
@@ -1308,4 +1311,5 @@ if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
 
 if __name__ == "__main__":
     main()
+
 
