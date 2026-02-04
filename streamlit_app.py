@@ -775,8 +775,9 @@ def main():
         page = 0
         st.sidebar.info("Pagination disabled when value filters are active")
 
-    if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
-        st.rerun()
+    if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
     # Main content
     st.markdown('<div class="main-header">🔊 Noise Monitoring System</div>', unsafe_allow_html=True)
@@ -1302,14 +1303,10 @@ def main():
         st.error(f"**Technical Error:** {str(e)}")
 
 
-
-# REPLACE the existing "Refresh Data" button with this single button
-if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
-    st.cache_data.clear()
-    st.rerun()
     
 if __name__ == "__main__":
     main()
+
 
 
 
