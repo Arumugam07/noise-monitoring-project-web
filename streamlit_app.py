@@ -609,13 +609,26 @@ def main():
         </style>
     """, unsafe_allow_html=True)
 
-    # Check authentication
+       # Check authentication
     if not st.session_state.get("auth", False):
         show_login_page()
         st.stop()
 
-    # TEMPORARY: Force clear cache on every load
-    st.cache_data.clear()
+         NUCLEAR CACHE CLEAR - Run once per session
+    if 'data_cache_cleared' not in st.session_state:
+        # Clear all caches
+        st.cache_data.clear()
+        st.cache_resource.clear()
+        
+        # Clear session state (except auth)
+        auth_status = st.session_state.get('auth', False)
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.session_state['auth'] = auth_status
+        st.session_state['data_cache_cleared'] = True
+        
+        # Force immediate rerun
+        st.rerun()
     
     # Logout button in sidebar after login
     st.sidebar.markdown("---")
@@ -1309,6 +1322,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
