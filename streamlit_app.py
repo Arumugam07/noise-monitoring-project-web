@@ -1187,11 +1187,16 @@ def main():
 
             display_df = table_data.copy()
             if "Date" in display_df.columns:
-                display_df["Date"] = pd.to_datetime(display_df["Date"]).dt.strftime(
-                    "%Y-%m-%d"
-                )
+                display_df["Date"] = pd.to_datetime(display_df["Date"]).dt.strftime("%Y-%m-%d")
+                
             if "Time" in display_df.columns:
                 display_df["Time"] = display_df["Time"].astype(str)
+                
+            # UI-only cleanup: replace NaN with empty string
+            numeric_cols = [c for c in display_df.columns if c not in ("Date", "Time")]
+            for col in numeric_cols:
+                if col in display_df.columns:
+                    display_df[col] = display_df[col].fillna('')
 
             # Format numeric columns
             format_dict = {
@@ -1322,6 +1327,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
