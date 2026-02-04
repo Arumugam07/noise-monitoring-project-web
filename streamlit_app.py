@@ -614,7 +614,7 @@ def main():
         show_login_page()
         st.stop()
 
-         NUCLEAR CACHE CLEAR - Run once per session
+     #NUCLEAR CACHE CLEAR - Run once per session
     if 'data_cache_cleared' not in st.session_state:
         # Clear all caches
         st.cache_data.clear()
@@ -1322,6 +1322,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
