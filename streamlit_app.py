@@ -1302,14 +1302,14 @@ def main():
         st.error(f"**Technical Error:** {str(e)}")
 
 
-if st.sidebar.button("🔄 Refresh Data", use_container_width=True):
-    st.rerun()
-# Add this near the top of your main() function, after the login check
+
+# REPLACE the existing "Refresh Data" button with this single button
 if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
     st.cache_data.clear()
     st.rerun()
-
+    
 if __name__ == "__main__":
     main()
+
 
 
