@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-Monthly Noise Monitoring Report Generator with HTML Visual Reports
+Monthly Noise Monitoring Report Generator - FIXED VERSION
 
-Generates:
-1. CSV reports (system health, incidents, alerts)
-2. HTML visual report matching the Streamlit app design
-3. Only flags issues: 7+ consecutive offline days OR <40% health
+Matches Streamlit app logic exactly:
+- Uses wide_view_mv (minute-level data)
+- Same health calculations as app
+- Last 7 days analysis only
 """
 
 import os
@@ -44,16 +44,13 @@ LOCATIONS = {
     "16005": "Woodlands 11",
 }
 
-READINGS_PER_DAY = 1440
+READINGS_PER_DAY = 1440  # One reading per minute
 OFFLINE_THRESHOLD = 0.40
 
 
-def fetch_month_data(year, month):
-    """Fetch all meter readings for a specific month."""
-    first_day = date(year, month, 1)
-    last_day = date(year, month, monthrange(year, month)[1])
-    
-    print(f"📅 Fetching data: {first_day} to {last_day}")
+def fetch_wide_view_data(start_date, end_date):
+    """Fetch data from wide_view_mv - same as Streamlit app."""
+    print(f"📅 Fetching data from wide_view_mv: {start_date} to {end_date}")
     
     all_data = []
     offset = 0
@@ -61,10 +58,11 @@ def fetch_month_data(year, month):
     
     while True:
         try:
-            resp = supabase.table("meter_readings").select("*") \
-                .gte("reading_datetime", f"{first_day}T00:00:00Z") \
-                .lte("reading_datetime", f"{last_day}T23:59:59Z") \
-                .order("reading_datetime") \
+            resp = supabase.table("wide_view_mv").select("*") \
+                .gte("Date", str(start_date)) \
+                .lte("Date", str(end_date)) \
+                .order("Date", desc=False) \
+                .order("Time", desc=False) \
                 .range(offset, offset + batch_size - 1) \
                 .execute()
             
@@ -85,38 +83,112 @@ def fetch_month_data(year, month):
             break
     
     print(f"\n✅ Total records loaded: {len(all_data):,}")
-    return pd.DataFrame(all_data)
+    
+    df = pd.DataFrame(all_data)
+    if not df.empty and 'Date' in df.columns:
+        df['Date'] = pd.to_datetime(df['Date']).dt.date
+    
+    return df
 
 
-def detect_consecutive_offline_days(df, year, month):
+def generate_system_health_report(df, start_date, end_date):
+    """
+    Generate system health - EXACTLY like Streamlit app.
+    Uses wide_view_mv format with location columns.
+    """
+    analysis_days = (end_date - start_date).days + 1
+    
+    print(f"\n📊 Generating system health (Last {analysis_days} days: {start_date} to {end_date})...")
+    
+    # Get location columns (exclude Date and Time)
+    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
+    
+    summary = []
+    critical_locations = []
+    
+    for loc_id in location_cols:
+        loc_name = LOCATIONS.get(loc_id, loc_id)
+        
+        # Count non-null readings for this location
+        total_readings = df[loc_id].notna().sum() if loc_id in df.columns else 0
+        
+        # Expected readings
+        expected_readings = READINGS_PER_DAY * analysis_days
+        
+        # Calculate completeness percentage
+        completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
+        
+        # Count days with ANY data (like Streamlit app)
+        if loc_id in df.columns:
+            days_online = df[df[loc_id].notna()]['Date'].nunique()
+        else:
+            days_online = 0
+        
+        # Determine status (matching Streamlit thresholds)
+        if completeness_pct >= 70:
+            status = 'ONLINE'
+        elif completeness_pct >= 40:
+            status = 'DEGRADED'
+        else:
+            status = 'OFFLINE'
+            critical_locations.append({
+                'name': loc_name,
+                'completeness': completeness_pct,
+                'days_online': days_online,
+                'total_days': analysis_days,
+                'total_readings': total_readings,
+                'expected_readings': expected_readings
+            })
+        
+        summary.append({
+            'Location': loc_name,
+            'Days_Online': days_online,
+            'Total_Days': analysis_days,
+            'Total_Readings': total_readings,
+            'Expected_Readings': expected_readings,
+            'Completeness_%': round(completeness_pct, 2),
+            'Status': status
+        })
+    
+    summary_df = pd.DataFrame(summary)
+    print(summary_df.to_string(index=False))
+    
+    return summary_df, critical_locations
+
+
+def detect_consecutive_offline_days(df, start_date, end_date):
     """Detect locations offline for 7+ consecutive days."""
-    first_day = date(year, month, 1)
-    last_day = date(year, month, monthrange(year, month)[1])
+    print(f"\n🔍 Checking for 7+ consecutive offline days...")
     
-    print("\n🔍 Checking for 7+ consecutive offline days...")
-    
+    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
     alerts = []
     
-    for loc_id, loc_name in LOCATIONS.items():
-        loc_data = df[df['location_id'] == loc_id].copy()
-        loc_data['date'] = pd.to_datetime(loc_data['reading_datetime']).dt.date
-        
-        daily_counts = loc_data.groupby('date').size().to_dict()
+    for loc_id in location_cols:
+        loc_name = LOCATIONS.get(loc_id, loc_id)
         
         consecutive_offline = 0
         offline_start = None
         
-        for single_date in pd.date_range(first_day, last_day, freq='D'):
+        for single_date in pd.date_range(start_date, end_date, freq='D'):
             single_date = single_date.date()
             
-            day_count = daily_counts.get(single_date, 0)
+            # Check how many readings for this day
+            day_df = df[df['Date'] == single_date]
+            
+            if day_df.empty or loc_id not in day_df.columns:
+                day_count = 0
+            else:
+                day_count = day_df[loc_id].notna().sum()
+            
             completeness = (day_count / READINGS_PER_DAY) if READINGS_PER_DAY > 0 else 0
             
+            # Day is offline if < 40% data
             if completeness < OFFLINE_THRESHOLD:
                 if consecutive_offline == 0:
                     offline_start = single_date
                 consecutive_offline += 1
             else:
+                # Day came back online
                 if consecutive_offline >= 7:
                     offline_end = single_date - timedelta(days=1)
                     alerts.append({
@@ -131,15 +203,16 @@ def detect_consecutive_offline_days(df, year, month):
                 consecutive_offline = 0
                 offline_start = None
         
+        # Check if still offline at end
         if consecutive_offline >= 7:
             alerts.append({
                 'location_id': loc_id,
                 'location_name': loc_name,
                 'offline_start': offline_start,
-                'offline_end': last_day,
+                'offline_end': end_date,
                 'consecutive_days': consecutive_offline,
             })
-            print(f"   ⚠️  {loc_name}: {consecutive_offline} days offline ({offline_start} to {last_day})")
+            print(f"   ⚠️  {loc_name}: {consecutive_offline} days offline ({offline_start} to {end_date})")
     
     if not alerts:
         print("   ✅ No locations offline for 7+ consecutive days")
@@ -147,112 +220,61 @@ def detect_consecutive_offline_days(df, year, month):
     return alerts
 
 
-def generate_system_health_report(df, year, month):
-    """Generate system health summary for LAST 7 DAYS of the month."""
-    last_day = date(year, month, monthrange(year, month)[1])
-    first_day_of_period = last_day - timedelta(days=6)  # Last 7 days
-    analysis_days = 7
-    
-    print(f"\n📊 Generating system health summary (Last 7 days: {first_day_of_period} to {last_day})...")
-    
-    summary = []
-    critical_locations = []
-    
-    # Filter data to last 7 days only
-    df['date'] = pd.to_datetime(df['reading_datetime']).dt.date
-    df_period = df[(df['date'] >= first_day_of_period) & (df['date'] <= last_day)]
-    
-    for loc_id, loc_name in LOCATIONS.items():
-        loc_data = df_period[df_period['location_id'] == loc_id]
-        
-        # CRITICAL FIX: Only count rows with actual readings (not null/None)
-        # Filter out null readings to match Streamlit app behavior
-        loc_data_valid = loc_data[loc_data['reading_value'].notna()]
-        
-        # Calculate days online using only valid readings
-        if not loc_data_valid.empty:
-            days_with_data = pd.to_datetime(loc_data_valid['reading_datetime']).dt.date.nunique()
-        else:
-            days_with_data = 0
-        
-        # Count only actual valid readings (excludes None/null values)
-        total_readings = len(loc_data_valid)
-        
-        # Expected readings = theoretical maximum (1440 per day × 7 days)
-        expected_readings = READINGS_PER_DAY * analysis_days
-        
-        # Calculate completeness percentage
-        completeness_pct = (total_readings / expected_readings * 100) if expected_readings > 0 else 0
-        
-        # Determine status based on completeness
-        if completeness_pct >= 70:
-            status = 'ONLINE'
-        elif completeness_pct >= 40:
-            status = 'DEGRADED'
-        else:
-            status = 'OFFLINE'
-            critical_locations.append({
-                'name': loc_name,
-                'completeness': completeness_pct,
-                'days_online': days_with_data,
-                'total_days': analysis_days,
-                'period_start': first_day_of_period,
-                'period_end': last_day
-            })
-        
-        summary.append({
-            'Location': loc_name,
-            'Days_Online': days_with_data,
-            'Total_Days': analysis_days,
-            'Total_Readings': total_readings,
-            'Expected_Readings': expected_readings,
-            'Completeness_%': round(completeness_pct, 2),
-            'Status': status
-        })
-    
-    summary_df = pd.DataFrame(summary)
-    print(summary_df.to_string(index=False))
-    
-    return summary_df, critical_locations, first_day_of_period, last_day
-
-
 def detect_high_noise_incidents(df, min_db=80, min_duration=2):
-    """Detect sustained high noise incidents."""
+    """
+    Detect sustained high noise incidents from wide_view_mv.
+    Need to unpivot the data first.
+    """
     print(f"\n🔊 Detecting noise ≥{min_db} dB for {min_duration}+ minutes...")
     
-    df_sorted = df.sort_values(['location_id', 'reading_datetime']).copy()
+    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
     incidents = []
     
-    for loc_id, loc_name in LOCATIONS.items():
-        loc_data = df_sorted[df_sorted['location_id'] == loc_id].copy()
+    for loc_id in location_cols:
+        loc_name = LOCATIONS.get(loc_id, loc_id)
         
-        if loc_data.empty:
+        # Get data for this location, sorted by date and time
+        df_loc = df[['Date', 'Time', loc_id]].copy()
+        df_loc = df_loc[df_loc[loc_id].notna()]  # Only rows with data
+        
+        if df_loc.empty:
             continue
+        
+        # Convert to numeric
+        df_loc[loc_id] = pd.to_numeric(df_loc[loc_id], errors='coerce')
+        df_loc = df_loc.dropna(subset=[loc_id])
+        
+        # Sort by date and time
+        df_loc = df_loc.sort_values(['Date', 'Time'])
         
         current_incident = None
         incident_values = []
         
-        for idx, row in loc_data.iterrows():
-            value = row.get('reading_value')
+        for idx, row in df_loc.iterrows():
+            value = row[loc_id]
             
-            if pd.notna(value) and value >= min_db:
+            if value >= min_db:
                 if current_incident is None:
+                    # Start new incident
                     current_incident = {
                         'location_name': loc_name,
-                        'start_time': row['reading_datetime']
+                        'start_date': row['Date'],
+                        'start_time': row['Time']
                     }
                     incident_values = [value]
                 else:
+                    # Continue incident
                     incident_values.append(value)
             else:
+                # Incident ended
                 if current_incident and len(incident_values) >= min_duration:
-                    prev_idx = loc_data.index.get_loc(idx) - 1
-                    prev_row = loc_data.iloc[prev_idx]
+                    prev_idx = df_loc.index.get_loc(idx) - 1
+                    prev_row = df_loc.iloc[prev_idx]
                     
                     incidents.append({
                         'Location': current_incident['location_name'],
-                        'Start_Time': pd.to_datetime(current_incident['start_time']).strftime('%Y-%m-%d %H:%M:%S'),
-                        'End_Time': pd.to_datetime(prev_row['reading_datetime']).strftime('%Y-%m-%d %H:%M:%S'),
+                        'Start_Time': f"{current_incident['start_date']} {current_incident['start_time']}",
+                        'End_Time': f"{prev_row['Date']} {prev_row['Time']}",
                         'Duration_Minutes': len(incident_values),
                         'Peak_dB': round(max(incident_values), 2),
                         'Average_dB': round(sum(incident_values) / len(incident_values), 2)
@@ -261,12 +283,13 @@ def detect_high_noise_incidents(df, min_db=80, min_duration=2):
                 current_incident = None
                 incident_values = []
         
+        # Check if incident ongoing at end
         if current_incident and len(incident_values) >= min_duration:
-            last_row = loc_data.iloc[-1]
+            last_row = df_loc.iloc[-1]
             incidents.append({
                 'Location': current_incident['location_name'],
-                'Start_Time': pd.to_datetime(current_incident['start_time']).strftime('%Y-%m-%d %H:%M:%S'),
-                'End_Time': pd.to_datetime(last_row['reading_datetime']).strftime('%Y-%m-%d %H:%M:%S'),
+                'Start_Time': f"{current_incident['start_date']} {current_incident['start_time']}",
+                'End_Time': f"{last_row['Date']} {last_row['Time']}",
                 'Duration_Minutes': len(incident_values),
                 'Peak_dB': round(max(incident_values), 2),
                 'Average_dB': round(sum(incident_values) / len(incident_values), 2)
@@ -462,7 +485,7 @@ def generate_html_report(health_df, offline_alerts, critical_locations, incident
 <body>
     <div class="header">
         <h1>🔊 Noise Monitoring System - Monthly Report</h1>
-        <p><strong>Full Period:</strong> {first_day.strftime('%B %d, %Y')} - {last_day.strftime('%B %d, %Y')} ({total_days_month} days)</p>
+        <p><strong>Report Period:</strong> {month_str} ({first_day.strftime('%B %Y')})</p>
         <p><strong>Generated:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S SGT')}</p>
     </div>
     
@@ -515,44 +538,41 @@ def generate_html_report(health_df, offline_alerts, critical_locations, incident
         <div class="alert-item">
             <strong>📍 {loc['name']}</strong><br>
             Completeness: {loc['completeness']:.2f}%<br>
-            Days Online: {loc['days_online']}/{loc['total_days']} days
+            Days Online: {loc['days_online']}/{loc['total_days']} days<br>
+            Readings: {loc['total_readings']:,}/{loc['expected_readings']:,}
         </div>
 """
         html += "    </div>\n"
     
-    # Sensor health cards - ONLY show if there are critical locations (below 40%)
-    if critical_locations:
-        html += """
+    # Sensor health cards - show ALL sensors like Streamlit app
+    html += """
     <div class="summary">
-        <h2>🔴 Critical Sensor Health Details (Below 40%)</h2>
+        <h2>📊 All Sensors Health Details</h2>
         <div class="sensor-grid">
 """
+    
+    # Sort by status (offline first, then degraded, then online)
+    status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
+    health_df_sorted = health_df.sort_values(
+        by='Status',
+        key=lambda x: x.map(status_order)
+    )
+    
+    for _, row in health_df_sorted.iterrows():
+        status = row['Status'].lower()
+        status_icon = {'online': '✅', 'degraded': '⚠️', 'offline': '❌'}[status]
         
-        # Only show locations that are actually critical (below 40%)
-        for loc in critical_locations:
-            # Find the full details from health_df
-            loc_row = health_df[health_df['Location'] == loc['name']].iloc[0]
-            
-            html += f"""
-            <div class="sensor-card offline">
-                <div class="sensor-name">📍 {loc['name']}</div>
-                <div class="sensor-status offline">❌ OFFLINE ({loc['completeness']:.0f}%)</div>
-                <div class="sensor-details">Days online: {loc['days_online']}/{loc['total_days']}</div>
-                <div class="sensor-details">Readings: {loc_row['Total_Readings']:,}/{loc_row['Expected_Readings']:,}</div>
-                <div class="sensor-details" style="color: #721c24; font-weight: 600; margin-top: 10px;">⚠️ REQUIRES MAINTENANCE</div>
+        html += f"""
+            <div class="sensor-card {status}">
+                <div class="sensor-name">📍 {row['Location']}</div>
+                <div class="sensor-status {status}">{status_icon} {row['Status']} ({row['Completeness_%']:.0f}%)</div>
+                <div class="sensor-details">Days online: {row['Days_Online']}/{row['Total_Days']}</div>
+                <div class="sensor-details">Readings: {row['Total_Readings']:,}/{row['Expected_Readings']:,}</div>
             </div>
 """
-        
-        html += """
+    
+    html += """
         </div>
-    </div>
-"""
-    else:
-        # All systems operational - show simple message
-        html += """
-    <div class="summary" style="background: #d4edda; border-left: 5px solid #28a745;">
-        <h2 style="color: #155724;">✅ All Sensors Operational</h2>
-        <p style="color: #155724; font-size: 1.1rem;">All 13 monitoring locations are functioning normally with completeness above 40%. No maintenance required.</p>
     </div>
 """
     
@@ -678,6 +698,7 @@ def main():
         year = int(sys.argv[1])
         month = int(sys.argv[2])
     else:
+        # Default to last month
         today = datetime.now()
         last_month = today.replace(day=1) - timedelta(days=1)
         year = last_month.year
@@ -687,17 +708,36 @@ def main():
     print(f"🔊 MONTHLY NOISE MONITORING REPORT - {year}-{month:02d}")
     print(f"{'='*70}")
     
-    df = fetch_month_data(year, month)
+    # Calculate last 7 days of the month for health analysis
+    last_day = date(year, month, monthrange(year, month)[1])
+    health_period_start = last_day - timedelta(days=6)  # Last 7 days
     
-    if df.empty:
+    # But we need full month data for offline detection
+    first_day = date(year, month, 1)
+    
+    # Fetch data for last 7 days (for health) AND full month (for offline detection)
+    df_full_month = fetch_wide_view_data(first_day, last_day)
+    
+    if df_full_month.empty:
         print("\n❌ No data found for this month")
         return
     
-    offline_alerts = detect_consecutive_offline_days(df, year, month)
-    health_df, critical_locations, health_period_start, health_period_end = generate_system_health_report(df, year, month)
-    incidents_df = detect_high_noise_incidents(df, min_db=80, min_duration=2)
+    # Filter to last 7 days for health calculation
+    df_last_7_days = df_full_month[
+        (df_full_month['Date'] >= health_period_start) &
+        (df_full_month['Date'] <= last_day)
+    ].copy()
     
-    save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month, health_period_start, health_period_end)
+    print(f"\n📊 Data loaded:")
+    print(f"   Full month ({first_day} to {last_day}): {len(df_full_month):,} rows")
+    print(f"   Last 7 days ({health_period_start} to {last_day}): {len(df_last_7_days):,} rows")
+    
+    # Generate reports
+    offline_alerts = detect_consecutive_offline_days(df_full_month, first_day, last_day)
+    health_df, critical_locations = generate_system_health_report(df_last_7_days, health_period_start, last_day)
+    incidents_df = detect_high_noise_incidents(df_full_month, min_db=80, min_duration=2)
+    
+    save_reports(health_df, incidents_df, offline_alerts, critical_locations, year, month, health_period_start, last_day)
     print_summary(offline_alerts, critical_locations, incidents_df)
     
     print(f"\n{'='*70}")
