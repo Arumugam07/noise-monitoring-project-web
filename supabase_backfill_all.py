@@ -29,6 +29,11 @@ logging.basicConfig(
 )
 log = logging.getLogger("supabase-backfill-all")
 
+# Add this near the top of your main() function, after the login check
+if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
+
 
 def main():
     load_dotenv()
@@ -139,4 +144,5 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
