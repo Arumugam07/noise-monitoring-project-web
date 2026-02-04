@@ -1301,6 +1301,11 @@ def main():
         
         st.error(f"**Technical Error:** {str(e)}")
 
+# Add this near the top of your main() function, after the login check
+if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
+    st.cache_data.clear()
+    st.rerun()
 
 if __name__ == "__main__":
     main()
+
