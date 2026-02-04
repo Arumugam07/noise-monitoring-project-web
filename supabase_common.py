@@ -82,40 +82,42 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
     rows: List[Dict[str, object]] = []
     
     for item in raw:
-    # Use the actual timestamp from the API response
-    try:
-        dt_str = item.get("dt")
-        if not dt_str:
+        # Use the actual timestamp from the API response
+        try:
+            dt_str = item.get("dt")
+            if not dt_str:
+                continue
+            
+            # Parse the ISO timestamp from API (format: "2025-05-06T23:00:00.000Z")
+            ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+            
+            # TRUNCATE to minute level (remove seconds and microseconds)
+            ts_utc = ts_utc.replace(second=0, microsecond=0)
+            
+        except Exception as e:
+            log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
             continue
         
-        # Parse the ISO timestamp from API (format: "2025-05-06T23:00:00.000Z")
-        ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
+        # Skip future timestamps (safety check)
+        if ts_utc > now_plus_1h_utc:
+            continue
         
-        
-    except Exception as e:
-        log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
-        continue
-    
-    # Skip future timestamps (safety check)
-    if ts_utc > now_plus_1h_utc:
-        continue
-    
-    # Extract the reading value
-    value = None
-    try:
-        if item.get("reading") is not None:
-            value = float(item.get("reading"))
-    except Exception:
+        # Extract the reading value
         value = None
-    
-    # Build the row for Supabase
-    rows.append({
-        "location_id": loc["ID"],
-        "location_name": loc["Name"],
-        "reading_value": value,
-        "reading_datetime": ts_utc.isoformat(),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
+        try:
+            if item.get("reading") is not None:
+                value = float(item.get("reading"))
+        except Exception:
+            value = None
+        
+        # Build the row for Supabase
+        rows.append({
+            "location_id": loc["ID"],
+            "location_name": loc["Name"],
+            "reading_value": value,
+            "reading_datetime": ts_utc.isoformat(),
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        })
     
     log.debug(f"Built {len(rows)} rows for {loc['ID']} on {day}")
     return rows
@@ -151,7 +153,3 @@ def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> 
 def yesterday_sgt() -> date:
     """Return yesterday's date in Singapore local time (SGT)."""
     return datetime.now(SGT).date() - timedelta(days=1)
-
-
-
-
