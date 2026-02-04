@@ -1194,9 +1194,7 @@ def main():
                 
             # UI-only cleanup: replace NaN with empty string
             numeric_cols = [c for c in display_df.columns if c not in ("Date", "Time")]
-            for col in numeric_cols:
-                if col in display_df.columns:
-                    display_df[col] = display_df[col].fillna('')
+            
 
             # Format numeric columns
             format_dict = {
@@ -1204,7 +1202,7 @@ def main():
             }
             
             if format_dict:
-                styled_df = display_df.style.format(format_dict, na_rep="—")
+                styled_df = display_df.style.format(format_dict, na_rep="")
                 st.dataframe(
                     styled_df,
                     use_container_width=True,
@@ -1327,6 +1325,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
