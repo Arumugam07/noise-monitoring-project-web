@@ -38,7 +38,7 @@ def main():
     # Configuration
     api_base = os.getenv("API_BASE_URL", API_DEFAULT).rstrip("/")
     table = os.getenv("SUPABASE_TABLE", "meter_readings")
-    empty_chunks_to_stop = max(1, int(os.getenv("EMPTY_CHUNKS_TO_STOP", "7")))
+    empty_chunks_to_stop = 999999
     
     # Supabase client
     try:
@@ -141,6 +141,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
