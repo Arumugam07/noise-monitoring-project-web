@@ -16,8 +16,13 @@ from supabase_common import LOCATIONS
 from telegram_alert import send_telegram_message, send_telegram_photo
 from health_screenshot import screenshot_streamlit_health
 
+# Load env
 load_dotenv()
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(levelname)s - %(message)s"
+)
 log = logging.getLogger("monthly-health-check")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
@@ -31,42 +36,51 @@ OFFLINE_THRESHOLD = 0.99
 LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 
+# ------------------------------------------------------------
+# FETCH DATA
+# ------------------------------------------------------------
 def fetch_month_data(supabase, year, month):
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
-    
+
     all_data = []
     offset = 0
+
     while True:
-        resp = supabase.table("meter_readings").select(
-            "location_id, location_name, reading_value, reading_datetime"
-        ) \
-            .gte("reading_datetime", f"{first_day}T00:00:00+00:00") \
-            .lte("reading_datetime", f"{last_day}T23:59:59+00:00") \
-            .range(offset, offset + 999) \
+        resp = (
+            supabase.table("meter_readings")
+            .select("location_id, location_name, reading_value, reading_datetime")
+            .gte("reading_datetime", f"{first_day}T00:00:00+00:00")
+            .lte("reading_datetime", f"{last_day}T23:59:59+00:00")
+            .range(offset, offset + 999)
             .execute()
-        
+        )
+
         batch = resp.data or []
         if not batch:
             break
+
         all_data.extend(batch)
+
         if len(batch) < 1000:
             break
+
         offset += 1000
 
     df = pd.DataFrame(all_data)
+
     if not df.empty:
         df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], utc=True)
-        # Convert to SGT
         df["Date"] = df["reading_datetime"].dt.tz_convert("Asia/Singapore").dt.date
-        # Truncate to minute
         df["reading_datetime"] = df["reading_datetime"].dt.floor("min")
-    
+
     return df, first_day, last_day
 
 
+# ------------------------------------------------------------
+# DETECT OFFLINE STREAKS
+# ------------------------------------------------------------
 def detect_offline_7_days(df, first_day, last_day):
-    """Detect any location offline 7+ consecutive days."""
     alerts = []
 
     for loc_id, loc_name in LOCATION_MAP.items():
@@ -84,7 +98,7 @@ def detect_offline_7_days(df, first_day, last_day):
                     streak_start = single_date
                 consecutive += 1
             else:
-                if consecutive >= 1:
+                if consecutive >= 7:
                     alerts.append({
                         "location_name": loc_name,
                         "offline_start": streak_start,
@@ -94,7 +108,7 @@ def detect_offline_7_days(df, first_day, last_day):
                 consecutive = 0
                 streak_start = None
 
-        if consecutive >= 1:
+        if consecutive >= 7:
             alerts.append({
                 "location_name": loc_name,
                 "offline_start": streak_start,
@@ -105,8 +119,10 @@ def detect_offline_7_days(df, first_day, last_day):
     return alerts
 
 
+# ------------------------------------------------------------
+# BUILD HEALTH SUMMARY
+# ------------------------------------------------------------
 def build_health_summary(df, first_day, last_day):
-    """Build health summary DataFrame from long format meter_readings."""
     total_days = (last_day - first_day).days + 1
     rows = []
 
@@ -139,48 +155,57 @@ def build_health_summary(df, first_day, last_day):
         key=lambda x: x.map({"OFFLINE": 0, "DEGRADED": 1, "ONLINE": 2})
     )
 
+
+# ------------------------------------------------------------
+# BUILD TELEGRAM MESSAGE
+# ------------------------------------------------------------
 def build_alert_message(offline_alerts, health_df, year, month, first_day, last_day):
-    """Build the Telegram alert message."""
+
     month_str = date(year, month, 1).strftime("%B %Y")
+
     online = len(health_df[health_df["Status"] == "ONLINE"])
     degraded = len(health_df[health_df["Status"] == "DEGRADED"])
     offline = len(health_df[health_df["Status"] == "OFFLINE"])
     total = len(health_df)
-    health_pct = (online / total * 100) if total > 0 else 0
+
+    health_pct = (online / total * 100) if total else 0
 
     alert_lines = "\n".join([
-        f"  • <b>{a['location_name']}</b>\n"
-        f"    📅 {a['offline_start']} → {a['offline_end']}\n"
-        f"    ⏱ {a['consecutive_days']} consecutive days offline"
+        f"• <b>{a['location_name']}</b>\n"
+        f"  📅 {a['offline_start']} → {a['offline_end']}\n"
+        f"  ⏱ {a['consecutive_days']} consecutive days"
         for a in offline_alerts
     ])
 
-    message = f"""🚨 <b>RSAF NOISE MONITORING — CRITICAL ALERT</b>
+    return f"""🚨 <b>RSAF NOISE MONITORING — CRITICAL ALERT</b>
 
 📅 <b>Report Period:</b> {month_str}
 🗓 <b>Analysis:</b> {first_day} to {last_day}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-⚠️ <b>LOCATIONS OFFLINE 7+ CONSECUTIVE DAYS:</b>
+━━━━━━━━━━━━━━━━━━━━━━
+⚠️ <b>LOCATIONS OFFLINE 7+ DAYS:</b>
 
 {alert_lines}
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>SYSTEM HEALTH SUMMARY:</b>
-  ✅ Operational: {online}/{total}
-  ⚠️ Degraded:    {degraded}/{total}
-  ❌ Critical:    {offline}/{total}
-  📈 Overall:     {health_pct:.0f}%
+━━━━━━━━━━━━━━━━━━━━━━
+📊 <b>SYSTEM HEALTH SUMMARY</b>
 
-━━━━━━━━━━━━━━━━━━━━━━━━
-⚡ <b>ACTION REQUIRED:</b> Please inspect and restore the affected monitoring stations immediately.
+🟢 Operational: {online}/{total}
+🟡 Degraded:     {degraded}/{total}
+🔴 Critical:     {offline}/{total}
 
-🔗 Dashboard: https://noise-monitoring-project-web.streamlit.app
+📈 Overall Health: <b>{health_pct:.0f}%</b>
+
+🔗 Dashboard:
+https://noise-monitoring-project-web.streamlit.app
 """
-    return message
 
 
+# ------------------------------------------------------------
+# MAIN
+# ------------------------------------------------------------
 def main():
+
     if len(sys.argv) >= 3:
         year, month = int(sys.argv[1]), int(sys.argv[2])
     else:
@@ -206,38 +231,48 @@ def main():
         log.info("✅ No 7+ consecutive offline days — no alert needed")
         return
 
-    # Generate screenshot
+    # Screenshot
     log.info("Screenshotting Streamlit app...")
     screenshot_path = screenshot_streamlit_health("health_alert.png")
     log.info(f"Screenshot saved: {screenshot_path}")
 
-    # Send Telegram alert
-    message = build_alert_message(offline_alerts, health_df, year, month, first_day, last_day)
-    # Short caption for image (safe under 1024 chars)
-    short_caption = f"""
-    🚨 NOISE MONITORING ALERT
-    
-    📅 {first_day} → {last_day}
-    📈 Overall Health: {health_pct:.0f}%
-    
-    ⚠️ {len(offline_alerts)} location(s) offline 7+ days
-    """
-    
-    # Send screenshot first
-    send_telegram_photo(
-        image_path=screenshot_path,
-        caption=short_caption,
-        token=TELEGRAM_TOKEN,
-        chat_id=TELEGRAM_CHAT_ID
+    # Build messages
+    message = build_alert_message(
+        offline_alerts,
+        health_df,
+        year,
+        month,
+        first_day,
+        last_day
     )
-    
-    # Then send full detailed message separately
-    send_telegram_message(
-        message,
-        TELEGRAM_TOKEN,
-        TELEGRAM_CHAT_ID
-    )
-    log.info("✅ Alert sent successfully")
+
+    online = len(health_df[health_df["Status"] == "ONLINE"])
+    total = len(health_df)
+    health_pct = (online / total * 100) if total else 0
+
+    short_caption = f"""🚨 NOISE MONITORING ALERT
+📅 {first_day} → {last_day}
+📈 Overall Health: {health_pct:.0f}%
+⚠️ {len(offline_alerts)} location(s) offline 7+ days"""
+
+    try:
+        send_telegram_photo(
+            image_path=screenshot_path,
+            caption=short_caption,
+            token=TELEGRAM_TOKEN,
+            chat_id=TELEGRAM_CHAT_ID
+        )
+
+        send_telegram_message(
+            message,
+            TELEGRAM_TOKEN,
+            TELEGRAM_CHAT_ID
+        )
+
+        log.info("✅ Alert sent successfully")
+
+    except Exception as e:
+        log.error(f"❌ Failed to send alert: {e}")
 
 
 if __name__ == "__main__":
