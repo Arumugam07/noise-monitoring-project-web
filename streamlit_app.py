@@ -34,7 +34,7 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
+DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view")
 PAGE_SIZE = 200
 READINGS_PER_DAY = 1440  # 60 min/hour * 24 hours
 # Adjusted thresholds for real-world data with gaps
@@ -1325,6 +1325,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
