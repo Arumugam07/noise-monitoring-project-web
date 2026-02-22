@@ -5,3 +5,5 @@ python-dotenv
 openpyxl
 requests
 python-dateutil
+playwright
+
