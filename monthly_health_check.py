@@ -38,11 +38,14 @@ def fetch_month_data(supabase, year, month):
     all_data = []
     offset = 0
     while True:
-        resp = supabase.table("wide_view").select("*") \
-            .gte("Date", str(first_day)) \
-            .lte("Date", str(last_day)) \
+        resp = supabase.table("meter_readings").select(
+            "location_id, location_name, reading_value, reading_datetime"
+        ) \
+            .gte("reading_datetime", f"{first_day}T00:00:00+00:00") \
+            .lte("reading_datetime", f"{last_day}T23:59:59+00:00") \
             .range(offset, offset + 999) \
             .execute()
+        
         batch = resp.data or []
         if not batch:
             break
@@ -52,26 +55,29 @@ def fetch_month_data(supabase, year, month):
         offset += 1000
 
     df = pd.DataFrame(all_data)
-    if not df.empty and "Date" in df.columns:
-        df["Date"] = pd.to_datetime(df["Date"]).dt.date
+    if not df.empty:
+        df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], utc=True)
+        # Convert to SGT
+        df["Date"] = df["reading_datetime"].dt.tz_convert("Asia/Singapore").dt.date
+        # Truncate to minute
+        df["reading_datetime"] = df["reading_datetime"].dt.floor("min")
+    
     return df, first_day, last_day
 
 
 def detect_offline_7_days(df, first_day, last_day):
     """Detect any location offline 7+ consecutive days."""
-    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
     alerts = []
 
-    for loc_id in location_cols:
-        loc_name = LOCATION_MAP.get(loc_id, loc_id)
+    for loc_id, loc_name in LOCATION_MAP.items():
+        loc_df = df[df["location_id"] == loc_id]
         consecutive = 0
         streak_start = None
 
         for single_date in pd.date_range(first_day, last_day, freq="D"):
             single_date = single_date.date()
-            day_df = df[df["Date"] == single_date]
-            count = day_df[loc_id].notna().sum() if (not day_df.empty and loc_id in day_df.columns) else 0
-            completeness = count / READINGS_PER_DAY
+            day_count = len(loc_df[loc_df["Date"] == single_date])
+            completeness = day_count / READINGS_PER_DAY
 
             if completeness < OFFLINE_THRESHOLD:
                 if consecutive == 0:
@@ -100,17 +106,16 @@ def detect_offline_7_days(df, first_day, last_day):
 
 
 def build_health_summary(df, first_day, last_day):
-    """Build health summary DataFrame."""
+    """Build health summary DataFrame from long format meter_readings."""
     total_days = (last_day - first_day).days + 1
-    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
     rows = []
 
-    for loc_id in location_cols:
-        loc_name = LOCATION_MAP.get(loc_id, loc_id)
-        total_readings = df[loc_id].notna().sum() if loc_id in df.columns else 0
+    for loc_id, loc_name in LOCATION_MAP.items():
+        loc_df = df[df["location_id"] == loc_id]
+        total_readings = len(loc_df)
         expected = READINGS_PER_DAY * total_days
         completeness = (total_readings / expected * 100) if expected > 0 else 0
-        days_online = df[df[loc_id].notna()]["Date"].nunique() if loc_id in df.columns else 0
+        days_online = loc_df["Date"].nunique() if not loc_df.empty else 0
 
         if completeness >= 70:
             status = "ONLINE"
@@ -133,7 +138,6 @@ def build_health_summary(df, first_day, last_day):
         "Status",
         key=lambda x: x.map({"OFFLINE": 0, "DEGRADED": 1, "ONLINE": 2})
     )
-
 
 def build_alert_message(offline_alerts, health_df, year, month, first_day, last_day):
     """Build the Telegram alert message."""
