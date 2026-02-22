@@ -2,6 +2,8 @@
 """
 Monthly health check - detects 7+ consecutive offline days
 and sends Telegram alert with screenshot.
+
+TEST MODE ENABLED (for verifying Telegram + screenshot)
 """
 
 import os
@@ -16,7 +18,18 @@ from supabase_common import LOCATIONS
 from telegram_alert import send_telegram_message, send_telegram_photo
 from health_screenshot import screenshot_streamlit_health
 
-# Load env
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+
+TEST_MODE = True                 # 🔥 CHANGE TO False AFTER TESTING
+OFFLINE_THRESHOLD = 0.40         # 40% completeness threshold
+CONSECUTIVE_DAYS_REQUIRED = 7    # 7 consecutive days
+
+READINGS_PER_DAY = 1440
+
+# ==========================================================
+
 load_dotenv()
 
 logging.basicConfig(
@@ -30,16 +43,14 @@ SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-READINGS_PER_DAY = 1440
-OFFLINE_THRESHOLD = 0.99
-
 LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 # FETCH DATA
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 def fetch_month_data(supabase, year, month):
+
     first_day = date(year, month, 1)
     last_day = date(year, month, monthrange(year, month)[1])
 
@@ -77,19 +88,22 @@ def fetch_month_data(supabase, year, month):
     return df, first_day, last_day
 
 
-# ------------------------------------------------------------
-# DETECT OFFLINE STREAKS
-# ------------------------------------------------------------
-def detect_offline_7_days(df, first_day, last_day):
+# ----------------------------------------------------------
+# DETECT OFFLINE STREAKS (40% for 7 days)
+# ----------------------------------------------------------
+def detect_offline_streaks(df, first_day, last_day):
+
     alerts = []
 
     for loc_id, loc_name in LOCATION_MAP.items():
+
         loc_df = df[df["location_id"] == loc_id]
         consecutive = 0
         streak_start = None
 
         for single_date in pd.date_range(first_day, last_day, freq="D"):
             single_date = single_date.date()
+
             day_count = len(loc_df[loc_df["Date"] == single_date])
             completeness = day_count / READINGS_PER_DAY
 
@@ -98,7 +112,7 @@ def detect_offline_7_days(df, first_day, last_day):
                     streak_start = single_date
                 consecutive += 1
             else:
-                if consecutive >= 7:
+                if consecutive >= CONSECUTIVE_DAYS_REQUIRED:
                     alerts.append({
                         "location_name": loc_name,
                         "offline_start": streak_start,
@@ -108,7 +122,7 @@ def detect_offline_7_days(df, first_day, last_day):
                 consecutive = 0
                 streak_start = None
 
-        if consecutive >= 7:
+        if consecutive >= CONSECUTIVE_DAYS_REQUIRED:
             alerts.append({
                 "location_name": loc_name,
                 "offline_start": streak_start,
@@ -119,18 +133,20 @@ def detect_offline_7_days(df, first_day, last_day):
     return alerts
 
 
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 # BUILD HEALTH SUMMARY
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 def build_health_summary(df, first_day, last_day):
+
     total_days = (last_day - first_day).days + 1
     rows = []
 
     for loc_id, loc_name in LOCATION_MAP.items():
+
         loc_df = df[df["location_id"] == loc_id]
         total_readings = len(loc_df)
         expected = READINGS_PER_DAY * total_days
-        completeness = (total_readings / expected * 100) if expected > 0 else 0
+        completeness = (total_readings / expected * 100) if expected else 0
         days_online = loc_df["Date"].nunique() if not loc_df.empty else 0
 
         if completeness >= 70:
@@ -143,25 +159,17 @@ def build_health_summary(df, first_day, last_day):
         rows.append({
             "Location": loc_name,
             "Days_Online": days_online,
-            "Total_Days": total_days,
-            "Total_Readings": total_readings,
-            "Expected_Readings": expected,
             "Completeness_%": round(completeness, 2),
             "Status": status
         })
 
-    return pd.DataFrame(rows).sort_values(
-        "Status",
-        key=lambda x: x.map({"OFFLINE": 0, "DEGRADED": 1, "ONLINE": 2})
-    )
+    return pd.DataFrame(rows)
 
 
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 # BUILD TELEGRAM MESSAGE
-# ------------------------------------------------------------
-def build_alert_message(offline_alerts, health_df, year, month, first_day, last_day):
-
-    month_str = date(year, month, 1).strftime("%B %Y")
+# ----------------------------------------------------------
+def build_alert_message(offline_alerts, health_df, first_day, last_day):
 
     online = len(health_df[health_df["Status"] == "ONLINE"])
     degraded = len(health_df[health_df["Status"] == "DEGRADED"])
@@ -177,83 +185,71 @@ def build_alert_message(offline_alerts, health_df, year, month, first_day, last_
         for a in offline_alerts
     ])
 
-    return f"""🚨 <b>RSAF NOISE MONITORING — CRITICAL ALERT</b>
+    return f"""🚨 <b>NOISE MONITORING SYSTEM ALERT</b>
 
-📅 <b>Report Period:</b> {month_str}
-🗓 <b>Analysis:</b> {first_day} to {last_day}
+📅 {first_day} → {last_day}
 
 ━━━━━━━━━━━━━━━━━━━━━━
-⚠️ <b>LOCATIONS OFFLINE 7+ DAYS:</b>
+⚠️ <b>OFFLINE (Below 40% for 7 Days)</b>
 
 {alert_lines}
 
 ━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>SYSTEM HEALTH SUMMARY</b>
+📊 <b>SYSTEM HEALTH</b>
 
 🟢 Operational: {online}/{total}
-🟡 Degraded:     {degraded}/{total}
-🔴 Critical:     {offline}/{total}
+🟡 Degraded: {degraded}/{total}
+🔴 Critical: {offline}/{total}
 
 📈 Overall Health: <b>{health_pct:.0f}%</b>
-
-🔗 Dashboard:
-https://noise-monitoring-project-web.streamlit.app
 """
 
 
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 # MAIN
-# ------------------------------------------------------------
+# ----------------------------------------------------------
 def main():
 
-    if len(sys.argv) >= 3:
-        year, month = int(sys.argv[1]), int(sys.argv[2])
-    else:
-        today = datetime.now()
-        last_month = today.replace(day=1) - timedelta(days=1)
-        year, month = last_month.year, last_month.month
+    today = datetime.now()
+    last_month = today.replace(day=1) - timedelta(days=1)
+    year, month = last_month.year, last_month.month
 
-    log.info(f"Running monthly health check for {year}-{month:02d}")
+    log.info("Running monthly health check")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     df, first_day, last_day = fetch_month_data(supabase, year, month)
 
-    if df.empty:
-        log.warning("No data found for this month")
-        return
-
-    offline_alerts = detect_offline_7_days(df, first_day, last_day)
     health_df = build_health_summary(df, first_day, last_day)
 
-    log.info(f"Found {len(offline_alerts)} offline alert(s)")
+    offline_alerts = detect_offline_streaks(df, first_day, last_day)
+
+    # 🔥 FORCE ALERT IN TEST MODE
+    if TEST_MODE:
+        log.warning("⚠ TEST MODE ENABLED — forcing test alert")
+
+        offline_alerts = [{
+            "location_name": "TEST LOCATION",
+            "offline_start": first_day,
+            "offline_end": last_day,
+            "consecutive_days": CONSECUTIVE_DAYS_REQUIRED
+        }]
 
     if not offline_alerts:
-        log.info("✅ No 7+ consecutive offline days — no alert needed")
+        log.info("✅ No alert triggered")
         return
 
     # Screenshot
-    log.info("Screenshotting Streamlit app...")
     screenshot_path = screenshot_streamlit_health("health_alert.png")
-    log.info(f"Screenshot saved: {screenshot_path}")
 
-    # Build messages
     message = build_alert_message(
         offline_alerts,
         health_df,
-        year,
-        month,
         first_day,
         last_day
     )
 
-    online = len(health_df[health_df["Status"] == "ONLINE"])
-    total = len(health_df)
-    health_pct = (online / total * 100) if total else 0
-
-    short_caption = f"""🚨 NOISE MONITORING ALERT
-📅 {first_day} → {last_day}
-📈 Overall Health: {health_pct:.0f}%
-⚠️ {len(offline_alerts)} location(s) offline 7+ days"""
+    # Short caption (under 1024 chars)
+    short_caption = "🚨 Noise Monitoring Alert\nScreenshot Attached"
 
     try:
         send_telegram_photo(
