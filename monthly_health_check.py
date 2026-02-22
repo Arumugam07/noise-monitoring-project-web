@@ -213,11 +213,29 @@ def main():
 
     # Send Telegram alert
     message = build_alert_message(offline_alerts, health_df, year, month, first_day, last_day)
+    # Short caption for image (safe under 1024 chars)
+    short_caption = f"""
+    🚨 NOISE MONITORING ALERT
+    
+    📅 {first_day} → {last_day}
+    📈 Overall Health: {health_pct:.0f}%
+    
+    ⚠️ {len(offline_alerts)} location(s) offline 7+ days
+    """
+    
+    # Send screenshot first
     send_telegram_photo(
         image_path=screenshot_path,
-        caption=message,
+        caption=short_caption,
         token=TELEGRAM_TOKEN,
         chat_id=TELEGRAM_CHAT_ID
+    )
+    
+    # Then send full detailed message separately
+    send_telegram_message(
+        message,
+        TELEGRAM_TOKEN,
+        TELEGRAM_CHAT_ID
     )
     log.info("✅ Alert sent successfully")
 
