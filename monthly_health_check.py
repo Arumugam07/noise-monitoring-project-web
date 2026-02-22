@@ -84,7 +84,7 @@ def detect_offline_7_days(df, first_day, last_day):
                     streak_start = single_date
                 consecutive += 1
             else:
-                if consecutive >= 7:
+                if consecutive >= 1:
                     alerts.append({
                         "location_name": loc_name,
                         "offline_start": streak_start,
@@ -94,7 +94,7 @@ def detect_offline_7_days(df, first_day, last_day):
                 consecutive = 0
                 streak_start = None
 
-        if consecutive >= 7:
+        if consecutive >= 1:
             alerts.append({
                 "location_name": loc_name,
                 "offline_start": streak_start,
