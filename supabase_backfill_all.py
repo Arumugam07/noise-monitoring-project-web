@@ -52,8 +52,8 @@ def main():
     supabase = create_client(supabase_url, supabase_key)
     
     # Date range: from yesterday back to May 1, 2025
-    end_date = yesterday_sgt()
-    start_date = date(2025, 5, 1)
+    end_date = date(2026, 2, 21)
+    start_date = date(2026, 2, 4)
     
     log.info("=" * 70)
     log.info("BACKFILL STARTING")
@@ -141,6 +141,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 
