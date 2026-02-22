@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Screenshot only the Sensor Health Summary section
+Screenshot only the Sensor Status section of Streamlit app
 """
 
 from playwright.sync_api import sync_playwright
@@ -14,18 +14,20 @@ def screenshot_streamlit_health(output_path="health_alert.png"):
 
         page.goto(STREAMLIT_URL, wait_until="networkidle", timeout=60000)
 
-        # Wait until health section appears
-        page.wait_for_selector("text=Sensor Health Summary", timeout=60000)
+        # Wait for correct section header
+        page.wait_for_selector("text=Sensor Status", timeout=60000)
 
-        # Locate the section container
-        section = page.locator("text=Sensor Health Summary").first
+        # Locate header element
+        header = page.locator("text=Sensor Status").first
 
         # Scroll into view
-        section.scroll_into_view_if_needed()
-        page.wait_for_timeout(3000)
+        header.scroll_into_view_if_needed()
 
-        # Screenshot only the health section area
-        section.screenshot(path=output_path)
+        # Give time for cards to fully render
+        page.wait_for_timeout(5000)
+
+        # Screenshot full page (safer for Streamlit layouts)
+        page.screenshot(path=output_path, full_page=True)
 
         browser.close()
 
