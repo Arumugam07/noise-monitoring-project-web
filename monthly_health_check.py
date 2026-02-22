@@ -38,7 +38,7 @@ def fetch_month_data(supabase, year, month):
     all_data = []
     offset = 0
     while True:
-        resp = supabase.table("wide_view_mv").select("*") \
+        resp = supabase.table("wide_view").select("*") \
             .gte("Date", str(first_day)) \
             .lte("Date", str(last_day)) \
             .range(offset, offset + 999) \
