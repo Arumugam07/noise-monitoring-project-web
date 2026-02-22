@@ -14,7 +14,7 @@ from supabase import create_client
 from dotenv import load_dotenv
 from supabase_common import LOCATIONS
 from telegram_alert import send_telegram_message, send_telegram_photo
-from health_screenshot import generate_health_html, screenshot_health_report
+from health_screenshot import screenshot_streamlit_health
 
 load_dotenv()
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -207,8 +207,8 @@ def main():
         return
 
     # Generate screenshot
-    html = generate_health_html(offline_alerts, health_df, date(year, month, 1))
-    screenshot_path = screenshot_health_report(html, "health_alert.png")
+    log.info("Screenshotting Streamlit app...")
+    screenshot_path = screenshot_streamlit_health("health_alert.png")
     log.info(f"Screenshot saved: {screenshot_path}")
 
     # Send Telegram alert
