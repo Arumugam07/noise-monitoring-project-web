@@ -779,7 +779,9 @@ def main():
 
     st.sidebar.subheader("📄 Pagination")
     
-    if not value_filter_active:
+    is_single_day_view = (start_date is not None and end_date is not None and start_date == end_date)
+    
+    if not value_filter_active and not is_single_day_view:
         page = st.sidebar.number_input(
             "Page Number",
             min_value=0,
@@ -789,7 +791,8 @@ def main():
         )
     else:
         page = 0
-        st.sidebar.info("Pagination disabled when value filters are active")
+        if is_single_day_view:
+            st.sidebar.info("Single day view — showing all readings")
 
     if st.sidebar.button("🔄 Clear Cache & Reload", use_container_width=True):
         st.cache_data.clear()
@@ -817,13 +820,18 @@ def main():
                 if not filtered.empty:
                     st.success(f"✅ Found {len(filtered)} records matching your filter criteria")
             else:
-                # Fetch paginated data for table display only
-                df_page = fetch_page(page, PAGE_SIZE, start_date, end_date)
-                filtered_page = filter_frame(df_page, start_date, end_date, selected_ids, vmin, vmax)
-
-                # Use ALL data for health, paginated data for table
-                filtered = filtered_all  # For health calculations
-                filtered_table = filtered_page  # For table display
+                is_single_day = (start_date == end_date)
+                
+                if is_single_day:
+                    # Single day - load everything, no pagination needed
+                    filtered = filtered_all
+                    filtered_table = filtered_all
+                else:
+                    # Multi-day - use pagination for table
+                    df_page = fetch_page(page, PAGE_SIZE, start_date, end_date)
+                    filtered_page = filter_frame(df_page, start_date, end_date, selected_ids, vmin, vmax)
+                    filtered = filtered_all
+                    filtered_table = filtered_page
 
         if not filtered.empty:
             # Check if any value filters are active
@@ -1325,6 +1333,7 @@ def main():
     
 if __name__ == "__main__":
     main()
+
 
 
 
