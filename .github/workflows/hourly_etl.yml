@@ -1,10 +1,8 @@
 name: Hourly Noise Data ETL
-
 on:
   schedule:
-    - cron: '0 * * * *'  # Every hour at :00
+    - cron: '0 * * * *'
   workflow_dispatch:
-
 jobs:
   hourly-etl:
     runs-on: ubuntu-latest
@@ -22,3 +20,8 @@ jobs:
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_TABLE: meter_readings
         run: python supabase_today.py
+      - name: Refresh Materialized View
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python refresh_mv.py
