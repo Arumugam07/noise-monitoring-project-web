@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
 """
-Simple and stable full-page Streamlit screenshot
+Screenshot Streamlit app after login - captures sensor health page
 """
-
+import os
 from playwright.sync_api import sync_playwright
 
 STREAMLIT_URL = "https://noise-monitoring-project-web.streamlit.app"
 
 def screenshot_streamlit_health(output_path="health_alert.png"):
+    
+    username = os.getenv("APP_USERNAME", "afic")
+    password = os.getenv("APP_PASSWORD", "Password3!")
 
     with sync_playwright() as p:
         browser = p.chromium.launch(
             headless=True,
             args=["--no-sandbox", "--disable-dev-shm-usage"]
         )
-
         page = browser.new_page(
             viewport={"width": 1600, "height": 1200}
         )
 
-        # Open app
+        # Step 1: Open the app
         page.goto(STREAMLIT_URL, timeout=60000)
+        page.wait_for_timeout(5000)
 
-        # Give Streamlit time to fully render charts/cards
-        page.wait_for_timeout(10000)
+        # Step 2: Fill in login form using placeholder text (the grey hint text)
+        page.get_by_placeholder("Enter your username").fill(username)
+        page.get_by_placeholder("Enter your password").fill(password)
 
-        # Take full page screenshot
+        # Step 3: Click Sign In button
+        page.get_by_text("Sign In").click()
+
+        # Step 4: Wait for dashboard to fully load
+        page.wait_for_timeout(12000)
+
+        # Step 5: Take full page screenshot
         page.screenshot(path=output_path, full_page=True)
 
         browser.close()
