@@ -2,21 +2,24 @@
 """
 Weekly health check - runs every Monday, checks last 7 days.
 Always sends a summary. Flags sensors by severity.
+Also runs consecutive critical check for sensors below 40% all 7 days.
 """
 
 import os
+import argparse
 import logging
 from datetime import datetime, timedelta
 import pandas as pd
 from supabase import create_client
 from dotenv import load_dotenv
 from supabase_common import LOCATIONS
-from telegram_alert import send_telegram_message, send_telegram_photo
+from telegram_alert import send_telegram_message
 
 # ==========================================================
 READINGS_PER_DAY = 1440
 CRITICAL_THRESHOLD = 0.40   # Below 40% = CRITICAL
 WARNING_THRESHOLD = 0.70    # Below 70% = WARNING
+CONSECUTIVE_DAYS = 7
 # ==========================================================
 
 load_dotenv()
@@ -36,7 +39,6 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 
 def fetch_last_7_days(supabase):
-
     # Use YESTERDAY as end date so today's partial data is excluded
     # This gives full complete days only (e.g. if today is Feb 24,
     # we check Feb 17 → Feb 23 — all 7 days with full 1440 readings)
@@ -95,13 +97,9 @@ def analyse_sensors(df, start_date, end_date):
     for loc_id in location_cols:
         loc_name = LOCATION_MAP.get(loc_id, loc_id)
 
-        # Total readings for this sensor across all 7 days
         total_readings = df[loc_id].notna().sum() if loc_id in df.columns else 0
-
-        # Completeness as one number — matches app exactly
         completeness_pct = (total_readings / expected_total * 100) if expected_total > 0 else 0
 
-        # Count offline days (0 readings = offline)
         days_offline = []
         days_degraded = []
         for single_date in pd.date_range(start_date, end_date, freq="D"):
@@ -207,8 +205,64 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
 """
 
 
-def main():
+def check_consecutive_critical(df, start_date, end_date):
+    """Return sensors that were critical (<40%) on every single day in the range."""
+    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
+    persistently_critical = []
 
+    for loc_id in location_cols:
+        loc_name = LOCATION_MAP.get(loc_id, loc_id)
+        day_results = []
+
+        for single_date in pd.date_range(start_date, end_date, freq="D"):
+            single_date = single_date.date()
+            day_df = df[df["Date"] == single_date]
+            day_count = (
+                day_df[loc_id].notna().sum()
+                if (not day_df.empty and loc_id in day_df.columns)
+                else 0
+            )
+            day_pct = day_count / READINGS_PER_DAY
+            day_results.append({
+                "date": single_date,
+                "pct": round(day_pct * 100, 1),
+                "count": day_count
+            })
+
+        # Only flag if EVERY day was below 40%
+        if all(d["pct"] < CRITICAL_THRESHOLD * 100 for d in day_results):
+            persistently_critical.append({
+                "name": loc_name,
+                "days": day_results
+            })
+
+    return persistently_critical
+
+
+def build_consecutive_alert(persistently_critical, start_date, end_date):
+    sensor_lines = ""
+    for s in persistently_critical:
+        day_breakdown = " | ".join(
+            f"{d['date'].strftime('%b %d')}: {d['pct']}%"
+            for d in s["days"]
+        )
+        sensor_lines += (
+            f"\n🔴 <b>{s['name']}</b>\n"
+            f"    Daily completeness: {day_breakdown}\n"
+            f"    ⚠️ Hardware inspection required immediately\n"
+        )
+
+    return f"""🚨 <b>PERSISTENT SENSOR FAILURE ALERT</b>
+📍 RSAF Noise Monitoring System
+📅 Period: {start_date} → {end_date}
+
+The following {len(persistently_critical)} sensor(s) have been below 40% for <b>7 consecutive days</b>:
+{sensor_lines}
+━━━━━━━━━━━━━━━━━━━━━━
+<i>Automated weekly failure check. Investigate immediately.</i>"""
+
+
+def main():
     log.info("Running weekly sensor health check")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
@@ -219,22 +273,50 @@ def main():
         return
 
     critical, warning, healthy = analyse_sensors(df, start_date, end_date)
-
     log.info(f"Critical: {len(critical)} | Warning: {len(warning)} | Healthy: {len(healthy)}")
 
     message = build_weekly_message(critical, warning, healthy, start_date, end_date)
 
     try:
-        send_telegram_message(
-            message,
-            TELEGRAM_TOKEN,
-            TELEGRAM_CHAT_ID
-        )
+        send_telegram_message(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
         log.info("✅ Weekly report sent successfully")
-    
     except Exception as e:
         log.error(f"❌ Failed to send report: {e}")
-    
-    
-    if __name__ == "__main__":
+
+
+def run_consecutive_check():
+    log.info("Running consecutive critical sensor check")
+
+    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    df, start_date, end_date = fetch_last_7_days(supabase)
+
+    if df.empty:
+        log.warning("No data returned — skipping consecutive check")
+        return
+
+    persistently_critical = check_consecutive_critical(df, start_date, end_date)
+
+    if not persistently_critical:
+        log.info("✅ No sensors persistently critical. No alert sent.")
+        return
+
+    log.info(f"🚨 {len(persistently_critical)} sensor(s) persistently critical — sending alert")
+    message = build_consecutive_alert(persistently_critical, start_date, end_date)
+
+    try:
+        send_telegram_message(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+        log.info("✅ Consecutive failure alert sent")
+    except Exception as e:
+        log.error(f"❌ Failed to send alert: {e}")
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--consecutive-check", action="store_true",
+                        help="Run consecutive failure check instead of weekly report")
+    args = parser.parse_args()
+
+    if args.consecutive_check:
+        run_consecutive_check()
+    else:
         main()
