@@ -38,7 +38,11 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 def fetch_last_7_days(supabase):
 
-    end_date = datetime.now().date()
+    # Use YESTERDAY as end date so today's partial data is excluded
+    # This gives full complete days only (e.g. if today is Feb 24,
+    # we check Feb 17 → Feb 23 — all 7 days with full 1440 readings)
+    yesterday = datetime.now().date() - timedelta(days=1)
+    end_date = yesterday
     start_date = end_date - timedelta(days=6)
 
     all_data = []
