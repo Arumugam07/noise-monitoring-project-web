@@ -23,19 +23,22 @@ def screenshot_streamlit_health(output_path="health_alert.png"):
 
         # Step 1: Open the app
         page.goto(STREAMLIT_URL, timeout=60000)
-        page.wait_for_timeout(5000)
 
-        # Step 2: Fill in login form using placeholder text (the grey hint text)
+        # Step 2: Wait until username field actually appears
+        page.get_by_placeholder("Enter your username").wait_for(timeout=60000)
+
+        # Step 3: Fill in login form
         page.get_by_placeholder("Enter your username").fill(username)
         page.get_by_placeholder("Enter your password").fill(password)
 
-        # Step 3: Click Sign In button
+        # Step 4: Click Sign In
         page.get_by_text("Sign In").click()
 
-        # Step 4: Wait for dashboard to fully load
-        page.wait_for_timeout(12000)
+        # Step 5: Wait for dashboard to actually render
+        page.wait_for_selector("text=Sensor Status", timeout=60000)
+        page.wait_for_timeout(5000)
 
-        # Step 5: Take full page screenshot
+        # Step 6: Screenshot
         page.screenshot(path=output_path, full_page=True)
 
         browser.close()
