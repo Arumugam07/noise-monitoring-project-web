@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Screenshot Streamlit app - one clean full page capture
+Screenshot Streamlit app - forces sidebar collapse, full page capture
 """
 import os
 from playwright.sync_api import sync_playwright
@@ -18,8 +18,9 @@ def screenshot_streamlit_health(output_path="health_alert.png"):
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
         )
 
+        # Wide viewport so content isn't cramped
         page = browser.new_page(
-            viewport={"width": 1400, "height": 900},
+            viewport={"width": 1600, "height": 900},
             device_scale_factor=1
         )
 
@@ -68,75 +69,62 @@ def screenshot_streamlit_health(output_path="health_alert.png"):
                 state="visible",
                 timeout=60000
             )
-            print("DEBUG: Sensor cards visible")
         except Exception:
             print("DEBUG: Could not confirm sensor cards")
 
-        # Step 6: Buffer for all 13 cards to fully render
+        # Step 6: Buffer for all cards to render
         page.wait_for_timeout(8000)
 
-        # Step 7: Scroll to trigger lazy render then back to top
+        # Step 7: Scroll full page to trigger lazy render
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(2000)
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(2000)
 
-        # Step 8: Hide all Streamlit chrome elements
-        print("DEBUG: Cleaning up UI...")
-        page.evaluate("""
-            () => {
-                // Hide sidebar
-                const sidebar = document.querySelector('[data-testid="stSidebar"]');
-                if (sidebar) sidebar.style.display = 'none';
+        # Step 8: Force close sidebar by clicking the collapse button if visible
+        try:
+            # Try clicking the sidebar close button directly
+            close_btn = page.locator('[data-testid="baseButton-headerNoPadding"]').first
+            if close_btn.is_visible():
+                close_btn.click()
+                page.wait_for_timeout(1000)
+                print("DEBUG: Clicked sidebar close button")
+        except Exception:
+            pass
 
-                // Hide sidebar collapse arrow button
-                const collapseBtn = document.querySelector('[data-testid="collapsedControl"]');
-                if (collapseBtn) collapseBtn.style.display = 'none';
-
-                // Hide top header bar (contains Fork, GitHub, menu buttons)
-                const header = document.querySelector('[data-testid="stHeader"]');
-                if (header) header.style.display = 'none';
-
-                // Hide footer
-                const footer = document.querySelector('[data-testid="stFooter"]');
-                if (footer) footer.style.display = 'none';
-
-                // Hide Streamlit toolbar (top right buttons)
-                const toolbar = document.querySelector('[data-testid="stToolbar"]');
-                if (toolbar) toolbar.style.display = 'none';
-
-                // Hide ALL Streamlit watermarks and badges
-                document.querySelectorAll(
-                    'a[href*="streamlit.io"], .viewerBadge_container__1QSob, ' +
-                    '[data-testid="stDecoration"], .stDeployButton'
-                ).forEach(el => el.style.display = 'none');
-
-                // Expand main content to use full width now sidebar is gone
-                const appView = document.querySelector('.appview-container');
-                if (appView) appView.style.marginLeft = '0';
-
-                const mainContent = document.querySelector('.main');
-                if (mainContent) mainContent.style.paddingLeft = '2rem';
-
-                // Remove top padding gap left by hidden header
-                const block = document.querySelector('[data-testid="block-container"]');
-                if (block) {
-                    block.style.paddingTop = '2rem';
-                    block.style.maxWidth = '100%';
-                }
+        # Step 9: Aggressively hide all Streamlit chrome via CSS injection
+        page.add_style_tag(content="""
+            [data-testid="stSidebar"] { display: none !important; }
+            [data-testid="collapsedControl"] { display: none !important; }
+            [data-testid="stHeader"] { display: none !important; }
+            [data-testid="stFooter"] { display: none !important; }
+            [data-testid="stToolbar"] { display: none !important; }
+            [data-testid="stDecoration"] { display: none !important; }
+            .stDeployButton { display: none !important; }
+            .viewerBadge_container__1QSob { display: none !important; }
+            a[href*="streamlit.io"] { display: none !important; }
+            header { display: none !important; }
+            footer { display: none !important; }
+            section[data-testid="stSidebar"] { display: none !important; }
+            .appview-container { margin-left: 0 !important; }
+            .main .block-container {
+                max-width: 100% !important;
+                padding-left: 3rem !important;
+                padding-right: 3rem !important;
+                padding-top: 2rem !important;
             }
         """)
 
-        page.wait_for_timeout(1000)
+        page.wait_for_timeout(1500)
 
-        # Step 9: full_page=True captures ENTIRE page as ONE image automatically
+        # Step 10: Full page screenshot — automatically stitches entire page
         print("DEBUG: Taking full page screenshot...")
         page.screenshot(
             path=output_path,
             full_page=True,
             type="png"
         )
-        print(f"DEBUG: Done — saved to {output_path}")
+        print(f"DEBUG: Saved to {output_path}")
 
         browser.close()
 
