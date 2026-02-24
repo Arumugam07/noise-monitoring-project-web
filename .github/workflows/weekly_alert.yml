@@ -1,7 +1,7 @@
-name: Monthly Health Alert
+name: Weekly Health Alert
 on:
   schedule:
-    - cron: '0 1 * * *'  # 9:00 AM SGT every day
+    - cron: '0 1 * * 1'  # Every Monday 9:00 AM SGT (1:00 UTC)
   workflow_dispatch:
 
 jobs:
@@ -22,7 +22,7 @@ jobs:
           playwright install chromium
           playwright install-deps chromium
 
-      - name: Run Monthly Health Check
+      - name: Run Weekly Health Check
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
@@ -38,8 +38,5 @@ jobs:
         with:
           name: debug-screenshots
           path: |
-            debug_before_login.png
-            debug_after_login.png
-            debug_login_timeout.png
             health_alert.png
           if-no-files-found: ignore
