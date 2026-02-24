@@ -2,7 +2,7 @@ name: Monthly Health Alert
 
 on:
   schedule:
-    - cron: '0 1 1 * *'  # 9:00 AM SGT on 1st of every month
+    - cron: '0 1 * * *'  # 9:00 AM SGT everday
   workflow_dispatch:
 
 jobs:
