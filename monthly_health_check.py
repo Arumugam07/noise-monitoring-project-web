@@ -80,56 +80,55 @@ def fetch_last_7_days(supabase):
 
 def analyse_sensors(df, start_date, end_date):
     """
-    For each sensor, calculate how many of the 7 days
-    were below 40% (critical) or below 70% (warning).
-    Returns three lists: critical, warning, healthy.
+    Match Streamlit app logic exactly:
+    - completeness = total_readings / (READINGS_PER_DAY * total_days)
+    - ONLINE >= 70%, DEGRADED 40-70%, CRITICAL < 40%
     """
     critical = []
     warning = []
     healthy = []
 
+    total_days = (end_date - start_date).days + 1
+    expected_total = READINGS_PER_DAY * total_days
+
     location_cols = [c for c in df.columns if c not in ("Date", "Time")]
 
     for loc_id in location_cols:
         loc_name = LOCATION_MAP.get(loc_id, loc_id)
-        days_critical = 0
-        days_warning = 0
-        days_healthy = 0
-        daily_completeness = []
 
+        # Total readings for this sensor across all 7 days
+        total_readings = df[loc_id].notna().sum() if loc_id in df.columns else 0
+
+        # Completeness as one number — matches app exactly
+        completeness_pct = (total_readings / expected_total * 100) if expected_total > 0 else 0
+
+        # Count offline days (0 readings = offline)
+        days_offline = []
+        days_degraded = []
         for single_date in pd.date_range(start_date, end_date, freq="D"):
             single_date = single_date.date()
             day_df = df[df["Date"] == single_date]
+            day_count = day_df[loc_id].notna().sum() if (not day_df.empty and loc_id in day_df.columns) else 0
+            day_pct = day_count / READINGS_PER_DAY * 100
 
-            if day_df.empty or loc_id not in day_df.columns:
-                day_count = 0
-            else:
-                day_count = day_df[loc_id].notna().sum()
-
-            completeness = day_count / READINGS_PER_DAY
-            daily_completeness.append(round(completeness * 100, 1))
-
-            if completeness < CRITICAL_THRESHOLD:
-                days_critical += 1
-            elif completeness < WARNING_THRESHOLD:
-                days_warning += 1
-            else:
-                days_healthy += 1
-
-        avg_completeness = sum(daily_completeness) / len(daily_completeness)
+            if day_pct < 40:
+                days_offline.append(single_date.strftime("%b %d"))
+            elif day_pct < 70:
+                days_degraded.append(single_date.strftime("%b %d"))
 
         sensor = {
             "name": loc_name,
-            "days_critical": days_critical,
-            "days_warning": days_warning,
-            "days_healthy": days_healthy,
-            "avg_completeness": round(avg_completeness, 1),
-            "daily": daily_completeness
+            "completeness_pct": round(completeness_pct, 1),
+            "total_readings": total_readings,
+            "expected_total": expected_total,
+            "total_days": total_days,
+            "days_offline": days_offline,
+            "days_degraded": days_degraded,
         }
 
-        if days_critical == 7:
+        if completeness_pct < 40:
             critical.append(sensor)
-        elif days_critical >= 4 or days_warning >= 5:
+        elif completeness_pct < 70:
             warning.append(sensor)
         else:
             healthy.append(sensor)
@@ -141,10 +140,9 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
 
     total = len(critical) + len(warning) + len(healthy)
 
-    # Determine overall system status
     if len(critical) == 0 and len(warning) == 0:
         overall = "✅ ALL SYSTEMS HEALTHY"
-        overall_note = "All sensors are performing well this week. No action needed."
+        overall_note = "All sensors performed well this week. No action needed."
     elif len(critical) == 0:
         overall = "⚠️ SYSTEM NEEDS ATTENTION"
         overall_note = "Some sensors are underperforming. Monitor closely."
@@ -152,37 +150,43 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
         overall = "🚨 CRITICAL SENSORS DETECTED"
         overall_note = "Immediate inspection required for critical sensors."
 
-    # Build critical section
     critical_lines = ""
     if critical:
-        critical_lines = "\n🔴 <b>CRITICAL — Below 40% for all 7 days:</b>\n"
+        critical_lines = "\n🔴 <b>CRITICAL — Below 40% completeness:</b>\n"
         for s in critical:
+            offline_str = ", ".join(s["days_offline"]) if s["days_offline"] else "None"
             critical_lines += (
                 f"  • <b>{s['name']}</b>\n"
-                f"    Avg completeness: {s['avg_completeness']}%\n"
-                f"    Days below 40%: {s['days_critical']}/7\n"
-                f"    ⚠️ Possible hardware fault or connectivity issue\n"
+                f"    Completeness: {s['completeness_pct']}% "
+                f"({s['total_readings']:,}/{s['expected_total']:,} readings)\n"
+                f"    Offline days: {offline_str}\n"
+                f"    ⚠️ Possible hardware fault or connectivity issue\n\n"
             )
 
-    # Build warning section
     warning_lines = ""
     if warning:
-        warning_lines = "\n🟡 <b>WARNING — Degraded performance:</b>\n"
+        warning_lines = "\n🟡 <b>WARNING — Degraded (40-70%):</b>\n"
         for s in warning:
+            offline_str = ", ".join(s["days_offline"]) if s["days_offline"] else "None"
+            degraded_str = ", ".join(s["days_degraded"]) if s["days_degraded"] else "None"
             warning_lines += (
                 f"  • <b>{s['name']}</b>\n"
-                f"    Avg completeness: {s['avg_completeness']}%\n"
-                f"    Days critical: {s['days_critical']}/7 | "
-                f"Days degraded: {s['days_warning']}/7\n"
-                f"    👀 Keep an eye on this sensor\n"
+                f"    Completeness: {s['completeness_pct']}% "
+                f"({s['total_readings']:,}/{s['expected_total']:,} readings)\n"
+                f"    Offline days: {offline_str}\n"
+                f"    Degraded days: {degraded_str}\n"
+                f"    👀 Monitor this sensor\n\n"
             )
 
-    # Build healthy section
     healthy_lines = ""
     if healthy:
-        healthy_lines = "\n✅ <b>HEALTHY — Operating normally:</b>\n"
+        healthy_lines = "\n✅ <b>HEALTHY — Operating normally (≥70%):</b>\n"
         for s in healthy:
-            healthy_lines += f"  • {s['name']} ({s['avg_completeness']}% avg)\n"
+            healthy_lines += (
+                f"  • {s['name']} — "
+                f"{s['completeness_pct']}% "
+                f"({s['total_readings']:,}/{s['expected_total']:,})\n"
+            )
 
     return f"""📊 <b>WEEKLY SENSOR HEALTH REPORT</b>
 📍 RSAF Noise Monitoring System
@@ -195,12 +199,12 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
 ━━━━━━━━━━━━━━━━━━━━━━
 📈 <b>SUMMARY</b>
 
-🔴 Critical: {len(critical)}/{total} sensors
-🟡 Warning:  {len(warning)}/{total} sensors
-✅ Healthy:  {len(healthy)}/{total} sensors
+🔴 Critical:  {len(critical)}/{total} sensors
+🟡 Warning:   {len(warning)}/{total} sensors
+✅ Healthy:   {len(healthy)}/{total} sensors
 {critical_lines}{warning_lines}{healthy_lines}
 ━━━━━━━━━━━━━━━━━━━━━━
-<i>This is an automated weekly report. Next report in 7 days.</i>
+<i>Automated weekly report. Next report in 7 days.</i>
 """
 
 
