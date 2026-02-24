@@ -112,8 +112,16 @@ def detect_offline_sensors(df, start_date, end_date):
         else:
             log.info(f"✅ {loc_name}: {days_offline}/7 days below 40% — no alert")
 
-    return alerts
+    # ✅ TEMP TEST - remove after confirming Telegram works
+    if not alerts:
+        alerts.append({
+            "location_name": "TEST SENSOR",
+            "offline_start": start_date,
+            "offline_end": end_date,
+            "days_offline": 7
+        })
 
+    return alerts  # ← test lines go ABOVE this
 
 def build_alert_message(alerts, start_date, end_date):
 
