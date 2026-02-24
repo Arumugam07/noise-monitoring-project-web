@@ -123,26 +123,42 @@ def detect_offline_sensors(df, start_date, end_date):
 
     return alerts  # ← test lines go ABOVE this
 
-def build_alert_message(alerts, start_date, end_date):
+def build_alert_message(alerts, start_date, end_date, df):
+
+    # Calculate live system health
+    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
+    total = len(location_cols)
+    offline_count = len(alerts)
+    online_count = total - offline_count
 
     alert_lines = "\n".join([
         f"• <b>{a['location_name']}</b>\n"
-        f"  📅 {a['offline_start']} → {a['offline_end']}\n"
-        f"  ⏱ {a['days_offline']} consecutive days below 40%"
+        f"  📅 Offline since: {a['offline_start']}\n"
+        f"  ⏱ {a['days_offline']} consecutive days with less than 40% data\n"
+        f"  🔴 Status: CRITICAL — Immediate attention needed"
         for a in alerts
     ])
 
-    return f"""🚨 <b>NOISE MONITORING SYSTEM ALERT</b>
-
-📅 Checking period: {start_date} → {end_date}
+    return f"""🚨 <b>SENSOR OFFLINE ALERT</b>
+📍 RSAF Noise Monitoring System
 
 ━━━━━━━━━━━━━━━━━━━━━━
-⚠️ <b>SENSORS OFFLINE (Below 40% for 7 Days)</b>
+🔴 <b>{offline_count} SENSOR(S) CRITICALLY OFFLINE</b>
 
 {alert_lines}
 
 ━━━━━━━━━━━━━━━━━━━━━━
-⚡ Action required: Please check the affected sensors.
+📊 <b>CURRENT SYSTEM STATUS</b>
+
+✅ Sensors online: {online_count}/{total}
+❌ Sensors offline: {offline_count}/{total}
+📅 Alert window: Last 7 days ({start_date} → {end_date})
+
+━━━━━━━━━━━━━━━━━━━━━━
+⚡ <b>What this means:</b>
+This sensor has been sending less than 40% of expected readings for 7 or more consecutive days. This may indicate a hardware fault, connectivity issue, or power failure at the sensor location.
+
+🔧 Please inspect the affected sensor(s) as soon as possible.
 """
 
 
@@ -166,7 +182,7 @@ def main():
     log.warning(f"🚨 {len(alerts)} sensor(s) triggered alert — sending Telegram notification")
 
     screenshot_path = screenshot_streamlit_health("health_alert.png")
-    message = build_alert_message(alerts, start_date, end_date)
+    message = build_alert_message(alerts, start_date, end_date, df)
 
     try:
         send_telegram_photo(
