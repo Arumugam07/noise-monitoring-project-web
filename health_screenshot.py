@@ -1,11 +1,39 @@
 #!/usr/bin/env python3
 """
-Screenshot Streamlit app - forces sidebar collapse, full page capture
+Screenshot Streamlit app - injects CSS before render to hide sidebar
 """
 import os
 from playwright.sync_api import sync_playwright
 
 STREAMLIT_URL = "https://noise-monitoring-project-web.streamlit.app"
+
+# CSS to hide all Streamlit chrome — injected early and repeatedly
+HIDE_CHROME_CSS = """
+    [data-testid="stSidebar"],
+    [data-testid="collapsedControl"],
+    [data-testid="stHeader"],
+    [data-testid="stFooter"],
+    [data-testid="stToolbar"],
+    [data-testid="stDecoration"],
+    [data-testid="stStatusWidget"],
+    .stDeployButton,
+    header, footer,
+    a[href*="streamlit.io"] {
+        display: none !important;
+        visibility: hidden !important;
+        width: 0 !important;
+        height: 0 !important;
+    }
+    .appview-container {
+        margin-left: 0 !important;
+    }
+    .main .block-container {
+        max-width: 100% !important;
+        padding-left: 3rem !important;
+        padding-right: 3rem !important;
+        padding-top: 1rem !important;
+    }
+"""
 
 def screenshot_streamlit_health(output_path="health_alert.png"):
     
@@ -18,11 +46,28 @@ def screenshot_streamlit_health(output_path="health_alert.png"):
             args=["--no-sandbox", "--disable-dev-shm-usage", "--disable-gpu"]
         )
 
-        # Wide viewport so content isn't cramped
         page = browser.new_page(
             viewport={"width": 1600, "height": 900},
             device_scale_factor=1
         )
+
+        # Inject CSS on every new document load — catches Streamlit re-renders
+        page.add_init_script(f"""
+            const style = document.createElement('style');
+            style.textContent = `{HIDE_CHROME_CSS}`;
+            document.head.appendChild(style);
+            
+            // Re-inject on every DOM mutation (Streamlit re-renders constantly)
+            const observer = new MutationObserver(() => {{
+                if (!document.getElementById('hide-chrome-style')) {{
+                    const s = document.createElement('style');
+                    s.id = 'hide-chrome-style';
+                    s.textContent = `{HIDE_CHROME_CSS}`;
+                    document.head.appendChild(s);
+                }}
+            }});
+            observer.observe(document.documentElement, {{ childList: true, subtree: true }});
+        """)
 
         # Step 1: Load app
         print("DEBUG: Loading app...")
@@ -69,56 +114,25 @@ def screenshot_streamlit_health(output_path="health_alert.png"):
                 state="visible",
                 timeout=60000
             )
+            print("DEBUG: Sensor cards visible")
         except Exception:
             print("DEBUG: Could not confirm sensor cards")
 
-        # Step 6: Buffer for all cards to render
+        # Step 6: Buffer for all 13 cards
         page.wait_for_timeout(8000)
 
-        # Step 7: Scroll full page to trigger lazy render
+        # Step 7: Scroll to trigger lazy render
         page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
         page.wait_for_timeout(2000)
         page.evaluate("window.scrollTo(0, 0)")
         page.wait_for_timeout(2000)
 
-        # Step 8: Force close sidebar by clicking the collapse button if visible
-        try:
-            # Try clicking the sidebar close button directly
-            close_btn = page.locator('[data-testid="baseButton-headerNoPadding"]').first
-            if close_btn.is_visible():
-                close_btn.click()
-                page.wait_for_timeout(1000)
-                print("DEBUG: Clicked sidebar close button")
-        except Exception:
-            pass
+        # Step 8: Re-apply CSS one final time before screenshot
+        page.add_style_tag(content=HIDE_CHROME_CSS)
+        page.wait_for_timeout(2000)
 
-        # Step 9: Aggressively hide all Streamlit chrome via CSS injection
-        page.add_style_tag(content="""
-            [data-testid="stSidebar"] { display: none !important; }
-            [data-testid="collapsedControl"] { display: none !important; }
-            [data-testid="stHeader"] { display: none !important; }
-            [data-testid="stFooter"] { display: none !important; }
-            [data-testid="stToolbar"] { display: none !important; }
-            [data-testid="stDecoration"] { display: none !important; }
-            .stDeployButton { display: none !important; }
-            .viewerBadge_container__1QSob { display: none !important; }
-            a[href*="streamlit.io"] { display: none !important; }
-            header { display: none !important; }
-            footer { display: none !important; }
-            section[data-testid="stSidebar"] { display: none !important; }
-            .appview-container { margin-left: 0 !important; }
-            .main .block-container {
-                max-width: 100% !important;
-                padding-left: 3rem !important;
-                padding-right: 3rem !important;
-                padding-top: 2rem !important;
-            }
-        """)
-
-        page.wait_for_timeout(1500)
-
-        # Step 10: Full page screenshot — automatically stitches entire page
-        print("DEBUG: Taking full page screenshot...")
+        # Step 9: Full page screenshot
+        print("DEBUG: Taking screenshot...")
         page.screenshot(
             path=output_path,
             full_page=True,
