@@ -12,7 +12,6 @@ from supabase import create_client
 from dotenv import load_dotenv
 from supabase_common import LOCATIONS
 from telegram_alert import send_telegram_message, send_telegram_photo
-from health_screenshot import screenshot_streamlit_health
 
 # ==========================================================
 READINGS_PER_DAY = 1440
@@ -223,27 +222,19 @@ def main():
 
     log.info(f"Critical: {len(critical)} | Warning: {len(warning)} | Healthy: {len(healthy)}")
 
-    # Always send the weekly report regardless of status
-    screenshot_path = screenshot_streamlit_health("health_alert.png")
     message = build_weekly_message(critical, warning, healthy, start_date, end_date)
 
     try:
-        send_telegram_photo(
-            image_path=screenshot_path,
-            caption="📊 Weekly Sensor Health Report — RSAF Noise Monitoring",
-            token=TELEGRAM_TOKEN,
-            chat_id=TELEGRAM_CHAT_ID
-        )
         send_telegram_message(
             message,
             TELEGRAM_TOKEN,
             TELEGRAM_CHAT_ID
         )
         log.info("✅ Weekly report sent successfully")
-
+    
     except Exception as e:
         log.error(f"❌ Failed to send report: {e}")
-
-
-if __name__ == "__main__":
-    main()
+    
+    
+    if __name__ == "__main__":
+        main()
