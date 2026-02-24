@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-Daily health check - detects 7 consecutive days below 40% and alerts.
-Runs daily, checks the last 7 days only.
+Weekly health check - runs every Monday, checks last 7 days.
+Always sends a summary. Flags sensors by severity.
 """
 
 import os
@@ -15,13 +15,9 @@ from telegram_alert import send_telegram_message, send_telegram_photo
 from health_screenshot import screenshot_streamlit_health
 
 # ==========================================================
-# CONFIGURATION
-# ==========================================================
-
-OFFLINE_THRESHOLD = 0.40
-CONSECUTIVE_DAYS_REQUIRED = 7
 READINGS_PER_DAY = 1440
-
+CRITICAL_THRESHOLD = 0.40   # Below 40% = CRITICAL
+WARNING_THRESHOLD = 0.70    # Below 70% = WARNING
 # ==========================================================
 
 load_dotenv()
@@ -30,7 +26,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(levelname)s - %(message)s"
 )
-log = logging.getLogger("daily-health-check")
+log = logging.getLogger("weekly-health-check")
 
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
@@ -78,14 +74,24 @@ def fetch_last_7_days(supabase):
     return df, start_date, end_date
 
 
-def detect_offline_sensors(df, start_date, end_date):
+def analyse_sensors(df, start_date, end_date):
+    """
+    For each sensor, calculate how many of the 7 days
+    were below 40% (critical) or below 70% (warning).
+    Returns three lists: critical, warning, healthy.
+    """
+    critical = []
+    warning = []
+    healthy = []
 
-    alerts = []
     location_cols = [c for c in df.columns if c not in ("Date", "Time")]
 
     for loc_id in location_cols:
         loc_name = LOCATION_MAP.get(loc_id, loc_id)
-        days_offline = 0
+        days_critical = 0
+        days_warning = 0
+        days_healthy = 0
+        daily_completeness = []
 
         for single_date in pd.date_range(start_date, end_date, freq="D"):
             single_date = single_date.date()
@@ -97,74 +103,106 @@ def detect_offline_sensors(df, start_date, end_date):
                 day_count = day_df[loc_id].notna().sum()
 
             completeness = day_count / READINGS_PER_DAY
+            daily_completeness.append(round(completeness * 100, 1))
 
-            if completeness < OFFLINE_THRESHOLD:
-                days_offline += 1
+            if completeness < CRITICAL_THRESHOLD:
+                days_critical += 1
+            elif completeness < WARNING_THRESHOLD:
+                days_warning += 1
+            else:
+                days_healthy += 1
 
-        if days_offline >= CONSECUTIVE_DAYS_REQUIRED:
-            alerts.append({
-                "location_name": loc_name,
-                "offline_start": start_date,
-                "offline_end": end_date,
-                "days_offline": days_offline
-            })
-            log.warning(f"⚠️ {loc_name}: {days_offline}/7 days below 40%")
+        avg_completeness = sum(daily_completeness) / len(daily_completeness)
+
+        sensor = {
+            "name": loc_name,
+            "days_critical": days_critical,
+            "days_warning": days_warning,
+            "days_healthy": days_healthy,
+            "avg_completeness": round(avg_completeness, 1),
+            "daily": daily_completeness
+        }
+
+        if days_critical == 7:
+            critical.append(sensor)
+        elif days_critical >= 4 or days_warning >= 5:
+            warning.append(sensor)
         else:
-            log.info(f"✅ {loc_name}: {days_offline}/7 days below 40% — no alert")
+            healthy.append(sensor)
 
-    # ✅ TEMP TEST - remove after confirming Telegram works
-    if not alerts:
-        alerts.append({
-            "location_name": "TEST SENSOR",
-            "offline_start": start_date,
-            "offline_end": end_date,
-            "days_offline": 7
-        })
+    return critical, warning, healthy
 
-    return alerts  # ← test lines go ABOVE this
 
-def build_alert_message(alerts, start_date, end_date, df):
+def build_weekly_message(critical, warning, healthy, start_date, end_date):
 
-    # Calculate live system health
-    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
-    total = len(location_cols)
-    offline_count = len(alerts)
-    online_count = total - offline_count
+    total = len(critical) + len(warning) + len(healthy)
 
-    alert_lines = "\n".join([
-        f"• <b>{a['location_name']}</b>\n"
-        f"  📅 Offline since: {a['offline_start']}\n"
-        f"  ⏱ {a['days_offline']} consecutive days with less than 40% data\n"
-        f"  🔴 Status: CRITICAL — Immediate attention needed"
-        for a in alerts
-    ])
+    # Determine overall system status
+    if len(critical) == 0 and len(warning) == 0:
+        overall = "✅ ALL SYSTEMS HEALTHY"
+        overall_note = "All sensors are performing well this week. No action needed."
+    elif len(critical) == 0:
+        overall = "⚠️ SYSTEM NEEDS ATTENTION"
+        overall_note = "Some sensors are underperforming. Monitor closely."
+    else:
+        overall = "🚨 CRITICAL SENSORS DETECTED"
+        overall_note = "Immediate inspection required for critical sensors."
 
-    return f"""🚨 <b>SENSOR OFFLINE ALERT</b>
+    # Build critical section
+    critical_lines = ""
+    if critical:
+        critical_lines = "\n🔴 <b>CRITICAL — Below 40% for all 7 days:</b>\n"
+        for s in critical:
+            critical_lines += (
+                f"  • <b>{s['name']}</b>\n"
+                f"    Avg completeness: {s['avg_completeness']}%\n"
+                f"    Days below 40%: {s['days_critical']}/7\n"
+                f"    ⚠️ Possible hardware fault or connectivity issue\n"
+            )
+
+    # Build warning section
+    warning_lines = ""
+    if warning:
+        warning_lines = "\n🟡 <b>WARNING — Degraded performance:</b>\n"
+        for s in warning:
+            warning_lines += (
+                f"  • <b>{s['name']}</b>\n"
+                f"    Avg completeness: {s['avg_completeness']}%\n"
+                f"    Days critical: {s['days_critical']}/7 | "
+                f"Days degraded: {s['days_warning']}/7\n"
+                f"    👀 Keep an eye on this sensor\n"
+            )
+
+    # Build healthy section
+    healthy_lines = ""
+    if healthy:
+        healthy_lines = "\n✅ <b>HEALTHY — Operating normally:</b>\n"
+        for s in healthy:
+            healthy_lines += f"  • {s['name']} ({s['avg_completeness']}% avg)\n"
+
+    return f"""📊 <b>WEEKLY SENSOR HEALTH REPORT</b>
 📍 RSAF Noise Monitoring System
+📅 Week: {start_date} → {end_date}
 
 ━━━━━━━━━━━━━━━━━━━━━━
-🔴 <b>{offline_count} SENSOR(S) CRITICALLY OFFLINE</b>
-
-{alert_lines}
-
-━━━━━━━━━━━━━━━━━━━━━━
-📊 <b>CURRENT SYSTEM STATUS</b>
-
-✅ Sensors online: {online_count}/{total}
-❌ Sensors offline: {offline_count}/{total}
-📅 Alert window: Last 7 days ({start_date} → {end_date})
+{overall}
+{overall_note}
 
 ━━━━━━━━━━━━━━━━━━━━━━
-⚡ <b>What this means:</b>
-This sensor has been sending less than 40% of expected readings for 7 or more consecutive days. This may indicate a hardware fault, connectivity issue, or power failure at the sensor location.
+📈 <b>SUMMARY</b>
 
-🔧 Please inspect the affected sensor(s) as soon as possible.
+🔴 Critical: {len(critical)}/{total} sensors
+🟡 Warning:  {len(warning)}/{total} sensors
+✅ Healthy:  {len(healthy)}/{total} sensors
+{critical_lines}{warning_lines}{healthy_lines}
+━━━━━━━━━━━━━━━━━━━━━━
+<i>This is an automated weekly report. Next report in 7 days.</i>
 """
 
 
 def main():
 
-    log.info("Running daily 7-day health check")
+    log.info("Running weekly sensor health check")
 
     supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
     df, start_date, end_date = fetch_last_7_days(supabase)
@@ -173,21 +211,18 @@ def main():
         log.warning("No data returned — skipping check")
         return
 
-    alerts = detect_offline_sensors(df, start_date, end_date)
+    critical, warning, healthy = analyse_sensors(df, start_date, end_date)
 
-    if not alerts:
-        log.info("✅ No sensors offline for 7 consecutive days — no alert sent")
-        return
+    log.info(f"Critical: {len(critical)} | Warning: {len(warning)} | Healthy: {len(healthy)}")
 
-    log.warning(f"🚨 {len(alerts)} sensor(s) triggered alert — sending Telegram notification")
-
+    # Always send the weekly report regardless of status
     screenshot_path = screenshot_streamlit_health("health_alert.png")
-    message = build_alert_message(alerts, start_date, end_date, df)
+    message = build_weekly_message(critical, warning, healthy, start_date, end_date)
 
     try:
         send_telegram_photo(
             image_path=screenshot_path,
-            caption="🚨 Sensor Offline Alert — 7 Days Below 40%",
+            caption="📊 Weekly Sensor Health Report — RSAF Noise Monitoring",
             token=TELEGRAM_TOKEN,
             chat_id=TELEGRAM_CHAT_ID
         )
@@ -196,10 +231,10 @@ def main():
             TELEGRAM_TOKEN,
             TELEGRAM_CHAT_ID
         )
-        log.info("✅ Alert sent successfully")
+        log.info("✅ Weekly report sent successfully")
 
     except Exception as e:
-        log.error(f"❌ Failed to send alert: {e}")
+        log.error(f"❌ Failed to send report: {e}")
 
 
 if __name__ == "__main__":
