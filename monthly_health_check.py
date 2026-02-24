@@ -108,9 +108,9 @@ def analyse_sensors(df, start_date, end_date):
             day_count = day_df[loc_id].notna().sum() if (not day_df.empty and loc_id in day_df.columns) else 0
             day_pct = day_count / READINGS_PER_DAY * 100
 
-            if day_pct < 40:
+            if day_count == 0:
                 days_offline.append(single_date.strftime("%b %d"))
-            elif day_pct < 70:
+            elif (day_count / READINGS_PER_DAY * 100) < 30:
                 days_degraded.append(single_date.strftime("%b %d"))
 
         sensor = {
