@@ -15,12 +15,7 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install playwright
-          playwright install chromium
-          playwright install-deps chromium
+      
 
       - name: Run Weekly Health Check
         env:
@@ -32,11 +27,7 @@ jobs:
           APP_PASSWORD: ${{ secrets.APP_PASSWORD }}
         run: python monthly_health_check.py
 
-      - name: Upload debug screenshots
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: debug-screenshots
-          path: |
-            health_alert.png
-          if-no-files-found: ignore
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      
