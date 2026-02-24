@@ -22,7 +22,7 @@ from health_screenshot import screenshot_streamlit_health
 # CONFIGURATION
 # ==========================================================
 
-TEST_MODE = False                 # 🔥 CHANGE TO False AFTER TESTING
+TEST_MODE = True                 # 🔥 CHANGE TO False AFTER TESTING
 OFFLINE_THRESHOLD = 0.40         # 40% completeness threshold
 CONSECUTIVE_DAYS_REQUIRED = 7    # 7 consecutive days
 
