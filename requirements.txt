@@ -6,4 +6,5 @@ openpyxl
 requests
 python-dateutil
 playwright
+psycopg2-binary
 
