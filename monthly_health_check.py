@@ -39,9 +39,8 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 
 def fetch_last_7_days(supabase):
-    # Use YESTERDAY as end date so today's partial data is excluded
-    # This gives full complete days only (e.g. if today is Feb 24,
-    # we check Feb 17 → Feb 23 — all 7 days with full 1440 readings)
+    # Use YESTERDAY as end date so today's partial data is excluded.
+    # e.g. if today is Mar 13, we check Mar 06 → Mar 12 (7 full days).
     yesterday = datetime.now().date() - timedelta(days=1)
     end_date = yesterday
     start_date = end_date - timedelta(days=6)
@@ -79,6 +78,25 @@ def fetch_last_7_days(supabase):
     return df, start_date, end_date
 
 
+def _send_stale_mv_alert(start_date, end_date):
+    """Send a Telegram alert when wide_view_mv returns no data (stale/unrefreshed)."""
+    msg = (
+        f"⚠️ <b>WEEKLY CHECK FAILED — No Data Found</b>\n\n"
+        f"📅 Period checked: {start_date} → {end_date}\n\n"
+        f"<code>wide_view_mv</code> returned 0 rows.\n"
+        f"The materialized view likely hasn't been refreshed recently.\n\n"
+        f"🔧 Fix — run in Supabase SQL Editor:\n"
+        f"<code>REFRESH MATERIALIZED VIEW public.wide_view_mv;</code>\n\n"
+        f"Or verify pg_cron is running the daily refresh at 17:00 UTC."
+    )
+    log.warning(f"No data returned for {start_date} to {end_date} — MV may be stale")
+    try:
+        send_telegram_message(msg, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+        log.info("✅ Stale MV alert sent via Telegram")
+    except Exception as e:
+        log.error(f"Could not send stale MV alert: {e}")
+
+
 def analyse_sensors(df, start_date, end_date):
     """
     Match Streamlit app logic exactly:
@@ -106,7 +124,6 @@ def analyse_sensors(df, start_date, end_date):
             single_date = single_date.date()
             day_df = df[df["Date"] == single_date]
             day_count = day_df[loc_id].notna().sum() if (not day_df.empty and loc_id in day_df.columns) else 0
-            day_pct = day_count / READINGS_PER_DAY * 100
 
             if day_count == 0:
                 days_offline.append(single_date.strftime("%b %d"))
@@ -269,7 +286,8 @@ def main():
     df, start_date, end_date = fetch_last_7_days(supabase)
 
     if df.empty:
-        log.warning("No data returned — skipping check")
+        # FIX: Alert via Telegram instead of silently skipping
+        _send_stale_mv_alert(start_date, end_date)
         return
 
     critical, warning, healthy = analyse_sensors(df, start_date, end_date)
@@ -291,7 +309,8 @@ def run_consecutive_check():
     df, start_date, end_date = fetch_last_7_days(supabase)
 
     if df.empty:
-        log.warning("No data returned — skipping consecutive check")
+        # FIX: Alert via Telegram instead of silently skipping
+        _send_stale_mv_alert(start_date, end_date)
         return
 
     persistently_critical = check_consecutive_critical(df, start_date, end_date)
