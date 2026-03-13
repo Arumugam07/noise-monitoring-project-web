@@ -2,7 +2,7 @@
 """
 Weekly health check - runs every Monday, checks last 7 days.
 Always sends a summary. Flags sensors by severity.
-Also runs consecutive critical check for sensors below 40% all 7 days.
+Also runs consecutive critical check for sensors below 40% for 3+ consecutive days.
 """
 
 import os
@@ -18,8 +18,8 @@ from telegram_alert import send_telegram_message
 # ==========================================================
 READINGS_PER_DAY = 1440
 CRITICAL_THRESHOLD = 0.40   # Below 40% = CRITICAL
-WARNING_THRESHOLD = 0.70    # Below 70% = WARNING
-CONSECUTIVE_DAYS = 7
+WARNING_THRESHOLD = 0.85    # Below 85% = WARNING, above 85% = HEALTHY
+CONSECUTIVE_DAYS = 3        # 3+ consecutive offline days = flag
 # ==========================================================
 
 load_dotenv()
@@ -39,8 +39,6 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 
 def fetch_last_7_days(supabase):
-    # Use YESTERDAY as end date so today's partial data is excluded.
-    # e.g. if today is Mar 13, we check Mar 06 → Mar 12 (7 full days).
     yesterday = datetime.now().date() - timedelta(days=1)
     end_date = yesterday
     start_date = end_date - timedelta(days=6)
@@ -79,7 +77,6 @@ def fetch_last_7_days(supabase):
 
 
 def _send_stale_mv_alert(start_date, end_date):
-    """Send a Telegram alert when wide_view_mv returns no data (stale/unrefreshed)."""
     msg = (
         f"⚠️ <b>WEEKLY CHECK FAILED — No Data Found</b>\n\n"
         f"📅 Period checked: {start_date} → {end_date}\n\n"
@@ -99,9 +96,10 @@ def _send_stale_mv_alert(start_date, end_date):
 
 def analyse_sensors(df, start_date, end_date):
     """
-    Match Streamlit app logic exactly:
-    - completeness = total_readings / (READINGS_PER_DAY * total_days)
-    - ONLINE >= 70%, DEGRADED 40-70%, CRITICAL < 40%
+    Thresholds:
+    - HEALTHY:  >= 85%
+    - WARNING:  40-85%
+    - CRITICAL: < 40%
     """
     critical = []
     warning = []
@@ -120,6 +118,11 @@ def analyse_sensors(df, start_date, end_date):
 
         days_offline = []
         days_degraded = []
+
+        # Track consecutive offline streak
+        current_streak = 0
+        max_streak = 0
+
         for single_date in pd.date_range(start_date, end_date, freq="D"):
             single_date = single_date.date()
             day_df = df[df["Date"] == single_date]
@@ -127,8 +130,12 @@ def analyse_sensors(df, start_date, end_date):
 
             if day_count == 0:
                 days_offline.append(single_date.strftime("%b %d"))
-            elif (day_count / READINGS_PER_DAY * 100) < 30:
-                days_degraded.append(single_date.strftime("%b %d"))
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+                if (day_count / READINGS_PER_DAY * 100) < 30:
+                    days_degraded.append(single_date.strftime("%b %d"))
 
         sensor = {
             "name": loc_name,
@@ -138,11 +145,13 @@ def analyse_sensors(df, start_date, end_date):
             "total_days": total_days,
             "days_offline": days_offline,
             "days_degraded": days_degraded,
+            "max_consecutive_offline": max_streak,
+            "has_consecutive_offline": max_streak >= CONSECUTIVE_DAYS,
         }
 
-        if completeness_pct < 40:
+        if completeness_pct < CRITICAL_THRESHOLD * 100:
             critical.append(sensor)
-        elif completeness_pct < 70:
+        elif completeness_pct < WARNING_THRESHOLD * 100:
             warning.append(sensor)
         else:
             healthy.append(sensor)
@@ -169,32 +178,34 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
         critical_lines = "\n🔴 <b>CRITICAL — Below 40% completeness:</b>\n"
         for s in critical:
             offline_str = ", ".join(s["days_offline"]) if s["days_offline"] else "None"
+            consec_note = f" ⚠️ {s['max_consecutive_offline']} consecutive offline days!" if s["has_consecutive_offline"] else ""
             critical_lines += (
                 f"  • <b>{s['name']}</b>\n"
                 f"    Completeness: {s['completeness_pct']}% "
                 f"({s['total_readings']:,}/{s['expected_total']:,} readings)\n"
-                f"    Offline days: {offline_str}\n"
+                f"    Offline days: {offline_str}{consec_note}\n"
                 f"    ⚠️ Possible hardware fault or connectivity issue\n\n"
             )
 
     warning_lines = ""
     if warning:
-        warning_lines = "\n🟡 <b>WARNING — Degraded (40-70%):</b>\n"
+        warning_lines = "\n🟡 <b>WARNING — Degraded (40-85%):</b>\n"
         for s in warning:
             offline_str = ", ".join(s["days_offline"]) if s["days_offline"] else "None"
             degraded_str = ", ".join(s["days_degraded"]) if s["days_degraded"] else "None"
+            consec_note = f" ⚠️ {s['max_consecutive_offline']} consecutive offline days!" if s["has_consecutive_offline"] else ""
             warning_lines += (
                 f"  • <b>{s['name']}</b>\n"
                 f"    Completeness: {s['completeness_pct']}% "
                 f"({s['total_readings']:,}/{s['expected_total']:,} readings)\n"
-                f"    Offline days: {offline_str}\n"
+                f"    Offline days: {offline_str}{consec_note}\n"
                 f"    Degraded days: {degraded_str}\n"
                 f"    👀 Monitor this sensor\n\n"
             )
 
     healthy_lines = ""
     if healthy:
-        healthy_lines = "\n✅ <b>HEALTHY — Operating normally (≥70%):</b>\n"
+        healthy_lines = "\n✅ <b>HEALTHY — Operating normally (≥85%):</b>\n"
         for s in healthy:
             healthy_lines += (
                 f"  • {s['name']} — "
@@ -223,7 +234,7 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
 
 
 def check_consecutive_critical(df, start_date, end_date):
-    """Return sensors that were critical (<40%) on every single day in the range."""
+    """Return sensors with 3+ consecutive days below 40%."""
     location_cols = [c for c in df.columns if c not in ("Date", "Time")]
     persistently_critical = []
 
@@ -246,11 +257,21 @@ def check_consecutive_critical(df, start_date, end_date):
                 "count": day_count
             })
 
-        # Only flag if EVERY day was below 40%
-        if all(d["pct"] < CRITICAL_THRESHOLD * 100 for d in day_results):
+        # Check for CONSECUTIVE_DAYS (3) or more consecutive days below 40%
+        max_streak = 0
+        current_streak = 0
+        for d in day_results:
+            if d["pct"] < CRITICAL_THRESHOLD * 100:
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        if max_streak >= CONSECUTIVE_DAYS:
             persistently_critical.append({
                 "name": loc_name,
-                "days": day_results
+                "days": day_results,
+                "max_streak": max_streak,
             })
 
     return persistently_critical
@@ -265,6 +286,7 @@ def build_consecutive_alert(persistently_critical, start_date, end_date):
         )
         sensor_lines += (
             f"\n🔴 <b>{s['name']}</b>\n"
+            f"    Max consecutive critical days: {s['max_streak']}\n"
             f"    Daily completeness: {day_breakdown}\n"
             f"    ⚠️ Hardware inspection required immediately\n"
         )
@@ -273,7 +295,7 @@ def build_consecutive_alert(persistently_critical, start_date, end_date):
 📍 RSAF Noise Monitoring System
 📅 Period: {start_date} → {end_date}
 
-The following {len(persistently_critical)} sensor(s) have been below 40% for <b>7 consecutive days</b>:
+The following {len(persistently_critical)} sensor(s) have been below 40% for <b>{CONSECUTIVE_DAYS}+ consecutive days</b>:
 {sensor_lines}
 ━━━━━━━━━━━━━━━━━━━━━━
 <i>Automated weekly failure check. Investigate immediately.</i>"""
@@ -286,7 +308,6 @@ def main():
     df, start_date, end_date = fetch_last_7_days(supabase)
 
     if df.empty:
-        # FIX: Alert via Telegram instead of silently skipping
         _send_stale_mv_alert(start_date, end_date)
         return
 
@@ -309,17 +330,16 @@ def run_consecutive_check():
     df, start_date, end_date = fetch_last_7_days(supabase)
 
     if df.empty:
-        # FIX: Alert via Telegram instead of silently skipping
         _send_stale_mv_alert(start_date, end_date)
         return
 
     persistently_critical = check_consecutive_critical(df, start_date, end_date)
 
     if not persistently_critical:
-        log.info("✅ No sensors persistently critical. No alert sent.")
+        log.info("✅ No sensors with 3+ consecutive critical days. No alert sent.")
         return
 
-    log.info(f"🚨 {len(persistently_critical)} sensor(s) persistently critical — sending alert")
+    log.info(f"🚨 {len(persistently_critical)} sensor(s) with consecutive critical days — sending alert")
     message = build_consecutive_alert(persistently_critical, start_date, end_date)
 
     try:
