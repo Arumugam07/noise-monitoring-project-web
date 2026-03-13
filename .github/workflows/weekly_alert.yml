@@ -2,13 +2,14 @@ name: Weekly Health Alert
 
 on:
   schedule:
-    - cron: '0 1 * * 1'  # Every Monday 9:00 AM SGT
-  workflow_dispatch:
+    - cron: '0 1 * * 1'  # Every Monday 9:00 AM SGT (UTC+8 = 01:00 UTC)
+  workflow_dispatch:      # Allow manual trigger from GitHub Actions UI
 
 jobs:
   health-alert:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
 
@@ -18,6 +19,15 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      # FIX: Refresh the materialized view FIRST so health check gets current data.
+      # Without this step, wide_view_mv returns 0 rows because it's never refreshed.
+      - name: Refresh Materialized View
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: python refresh_mv.py
 
       - name: Run Weekly Health Check
         env:
