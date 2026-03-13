@@ -449,7 +449,7 @@ def main():
     # Default to yesterday → 6 days prior (7 complete days, avoids partial today + timeout)
     today = date.today()
     yesterday = today - timedelta(days=1)
-    default_start = yesterday - timedelta(days=6)
+    default_start = yesterday - timedelta(days=7)
 
     date_selection = st.sidebar.date_input(
         "📅 Date Range",
@@ -888,3 +888,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
