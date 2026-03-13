@@ -2,7 +2,9 @@
 """
 Weekly health check - runs every Monday, checks last 7 days.
 Always sends a summary. Flags sensors by severity.
-Also runs consecutive critical check for sensors below 40% for 3+ consecutive days.
+Consecutive checks:
+  - 3+ consecutive days below 40% → persistent failure alert
+  - 3+ consecutive days of ZERO readings → emergency vendor alert
 """
 
 import os
@@ -19,7 +21,7 @@ from telegram_alert import send_telegram_message
 READINGS_PER_DAY = 1440
 CRITICAL_THRESHOLD = 0.40   # Below 40% = CRITICAL
 WARNING_THRESHOLD = 0.85    # Below 85% = WARNING, above 85% = HEALTHY
-CONSECUTIVE_DAYS = 3        # 3+ consecutive offline days = flag
+CONSECUTIVE_DAYS = 3        # 3+ consecutive days = flag
 # ==========================================================
 
 load_dotenv()
@@ -83,8 +85,7 @@ def _send_stale_mv_alert(start_date, end_date):
         f"<code>wide_view_mv</code> returned 0 rows.\n"
         f"The materialized view likely hasn't been refreshed recently.\n\n"
         f"🔧 Fix — run in Supabase SQL Editor:\n"
-        f"<code>REFRESH MATERIALIZED VIEW public.wide_view_mv;</code>\n\n"
-        f"Or verify pg_cron is running the daily refresh at 17:00 UTC."
+        f"<code>REFRESH MATERIALIZED VIEW public.wide_view_mv;</code>"
     )
     log.warning(f"No data returned for {start_date} to {end_date} — MV may be stale")
     try:
@@ -95,12 +96,6 @@ def _send_stale_mv_alert(start_date, end_date):
 
 
 def analyse_sensors(df, start_date, end_date):
-    """
-    Thresholds:
-    - HEALTHY:  >= 85%
-    - WARNING:  40-85%
-    - CRITICAL: < 40%
-    """
     critical = []
     warning = []
     healthy = []
@@ -118,8 +113,6 @@ def analyse_sensors(df, start_date, end_date):
 
         days_offline = []
         days_degraded = []
-
-        # Track consecutive offline streak
         current_streak = 0
         max_streak = 0
 
@@ -160,7 +153,6 @@ def analyse_sensors(df, start_date, end_date):
 
 
 def build_weekly_message(critical, warning, healthy, start_date, end_date):
-
     total = len(critical) + len(warning) + len(healthy)
 
     if len(critical) == 0 and len(warning) == 0:
@@ -234,7 +226,7 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
 
 
 def check_consecutive_critical(df, start_date, end_date):
-    """Return sensors with 3+ consecutive days below 40%."""
+    """Sensors with 3+ consecutive days below 40% completeness."""
     location_cols = [c for c in df.columns if c not in ("Date", "Time")]
     persistently_critical = []
 
@@ -257,7 +249,6 @@ def check_consecutive_critical(df, start_date, end_date):
                 "count": day_count
             })
 
-        # Check for CONSECUTIVE_DAYS (3) or more consecutive days below 40%
         max_streak = 0
         current_streak = 0
         for d in day_results:
@@ -277,6 +268,47 @@ def check_consecutive_critical(df, start_date, end_date):
     return persistently_critical
 
 
+def check_zero_reading_emergency(df, start_date, end_date):
+    """Sensors with 3+ consecutive days of ZERO readings — likely dead solar battery."""
+    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
+    emergency_sensors = []
+
+    for loc_id in location_cols:
+        loc_name = LOCATION_MAP.get(loc_id, loc_id)
+        day_results = []
+
+        for single_date in pd.date_range(start_date, end_date, freq="D"):
+            single_date = single_date.date()
+            day_df = df[df["Date"] == single_date]
+            day_count = (
+                day_df[loc_id].notna().sum()
+                if (not day_df.empty and loc_id in day_df.columns)
+                else 0
+            )
+            day_results.append({
+                "date": single_date,
+                "count": day_count
+            })
+
+        max_streak = 0
+        current_streak = 0
+        for d in day_results:
+            if d["count"] == 0:  # Completely offline — zero readings
+                current_streak += 1
+                max_streak = max(max_streak, current_streak)
+            else:
+                current_streak = 0
+
+        if max_streak >= CONSECUTIVE_DAYS:
+            emergency_sensors.append({
+                "name": loc_name,
+                "days": day_results,
+                "max_streak": max_streak,
+            })
+
+    return emergency_sensors
+
+
 def build_consecutive_alert(persistently_critical, start_date, end_date):
     sensor_lines = ""
     for s in persistently_critical:
@@ -288,7 +320,7 @@ def build_consecutive_alert(persistently_critical, start_date, end_date):
             f"\n🔴 <b>{s['name']}</b>\n"
             f"    Max consecutive critical days: {s['max_streak']}\n"
             f"    Daily completeness: {day_breakdown}\n"
-            f"    ⚠️ Hardware inspection required immediately\n"
+            f"    ⚠️ Hardware inspection required\n"
         )
 
     return f"""🚨 <b>PERSISTENT SENSOR FAILURE ALERT</b>
@@ -299,6 +331,32 @@ The following {len(persistently_critical)} sensor(s) have been below 40% for <b>
 {sensor_lines}
 ━━━━━━━━━━━━━━━━━━━━━━
 <i>Automated weekly failure check. Investigate immediately.</i>"""
+
+
+def build_emergency_alert(emergency_sensors, start_date, end_date):
+    sensor_lines = ""
+    for s in emergency_sensors:
+        day_breakdown = " | ".join(
+            f"{d['date'].strftime('%b %d')}: {'❌ NO DATA' if d['count'] == 0 else '✅ OK'}"
+            for d in s["days"]
+        )
+        sensor_lines += (
+            f"\n🔴 <b>{s['name']}</b>\n"
+            f"    {s['max_streak']} consecutive days with ZERO readings\n"
+            f"    Daily status: {day_breakdown}\n"
+            f"    🔋 Solar battery likely dead — vendor must attend site immediately\n"
+        )
+
+    return f"""🆘 <b>EMERGENCY — SENSOR COMPLETELY OFFLINE</b>
+📍 RSAF Noise Monitoring System
+📅 Period: {start_date} → {end_date}
+
+The following {len(emergency_sensors)} sensor(s) have had <b>ZERO readings for {CONSECUTIVE_DAYS}+ consecutive days</b>:
+{sensor_lines}
+━━━━━━━━━━━━━━━━━━━━━━
+⚡ <b>ACTION REQUIRED:</b> Vendor must physically attend these sites to inspect and recharge the solar-powered sensors.
+━━━━━━━━━━━━━━━━━━━━━━
+<i>Automated emergency alert.</i>"""
 
 
 def main():
@@ -333,20 +391,31 @@ def run_consecutive_check():
         _send_stale_mv_alert(start_date, end_date)
         return
 
+    # Check 1: below 40% for 3+ consecutive days
     persistently_critical = check_consecutive_critical(df, start_date, end_date)
-
     if not persistently_critical:
-        log.info("✅ No sensors with 3+ consecutive critical days. No alert sent.")
-        return
+        log.info("✅ No sensors with 3+ consecutive critical days.")
+    else:
+        log.info(f"🚨 {len(persistently_critical)} sensor(s) persistently critical — sending alert")
+        message = build_consecutive_alert(persistently_critical, start_date, end_date)
+        try:
+            send_telegram_message(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+            log.info("✅ Consecutive failure alert sent")
+        except Exception as e:
+            log.error(f"❌ Failed to send alert: {e}")
 
-    log.info(f"🚨 {len(persistently_critical)} sensor(s) with consecutive critical days — sending alert")
-    message = build_consecutive_alert(persistently_critical, start_date, end_date)
-
-    try:
-        send_telegram_message(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
-        log.info("✅ Consecutive failure alert sent")
-    except Exception as e:
-        log.error(f"❌ Failed to send alert: {e}")
+    # Check 2: ZERO readings for 3+ consecutive days — emergency vendor alert
+    emergency_sensors = check_zero_reading_emergency(df, start_date, end_date)
+    if not emergency_sensors:
+        log.info("✅ No sensors with 3+ consecutive days of zero readings.")
+    else:
+        log.info(f"🆘 {len(emergency_sensors)} sensor(s) completely offline — sending EMERGENCY alert")
+        message = build_emergency_alert(emergency_sensors, start_date, end_date)
+        try:
+            send_telegram_message(message, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID)
+            log.info("✅ Emergency alert sent")
+        except Exception as e:
+            log.error(f"❌ Failed to send emergency alert: {e}")
 
 
 if __name__ == "__main__":
