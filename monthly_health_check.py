@@ -206,7 +206,7 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
             )
 
     return f"""📊 <b>WEEKLY SENSOR HEALTH REPORT</b>
-📍 RSAF Noise Monitoring System
+📍 Noise Monitoring System
 📅 Week: {start_date} → {end_date}
 
 ━━━━━━━━━━━━━━━━━━━━━━
@@ -324,7 +324,7 @@ def build_consecutive_alert(persistently_critical, start_date, end_date):
         )
 
     return f"""🚨 <b>PERSISTENT SENSOR FAILURE ALERT</b>
-📍 RSAF Noise Monitoring System
+📍 Noise Monitoring System
 📅 Period: {start_date} → {end_date}
 
 The following {len(persistently_critical)} sensor(s) have been below 40% for <b>{CONSECUTIVE_DAYS}+ consecutive days</b>:
@@ -348,7 +348,7 @@ def build_emergency_alert(emergency_sensors, start_date, end_date):
         )
 
     return f"""🆘 <b>EMERGENCY — SENSOR COMPLETELY OFFLINE</b>
-📍 RSAF Noise Monitoring System
+📍 Noise Monitoring System
 📅 Period: {start_date} → {end_date}
 
 The following {len(emergency_sensors)} sensor(s) have had <b>ZERO readings for {CONSECUTIVE_DAYS}+ consecutive days</b>:
