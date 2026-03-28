@@ -1,7 +1,7 @@
 name: Weekly Health Alert
 on:
   schedule:
-    - cron: '0 1 * * 1'  # Every Monday 9:00 AM SGT (UTC+8 = 01:00 UTC)
+    - cron: '0 1 */3 * *'  # Every 3 days 9:00 AM SGT (UTC+8 = 01:00 UTC)
   workflow_dispatch:
 
 jobs:
