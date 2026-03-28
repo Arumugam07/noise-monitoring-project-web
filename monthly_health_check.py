@@ -221,7 +221,7 @@ def build_weekly_message(critical, warning, healthy, start_date, end_date):
 ✅ Healthy:   {len(healthy)}/{total} sensors
 {critical_lines}{warning_lines}{healthy_lines}
 ━━━━━━━━━━━━━━━━━━━━━━
-<i>Automated weekly report. Next report in 7 days.</i>
+<i>Automated report. Next report in 3 days.</i>
 """
 
 
