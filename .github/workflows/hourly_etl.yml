@@ -22,6 +22,7 @@ jobs:
         run: python supabase_today.py
       - name: Refresh Materialized View
         env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
         run: python refresh_mv.py
