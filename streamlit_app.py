@@ -158,58 +158,37 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
 
 def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration_minutes):
     incidents = []
-    df_sorted = df.sort_values(['Date', 'Time']).copy()
+    df_sorted = df.sort_values(['Date', 'Time']).reset_index(drop=True)
+    
+    # Build a single datetime column once
+    df_sorted['_dt'] = pd.to_datetime(
+        df_sorted['Date'].astype(str) + ' ' + df_sorted['Time'].astype(str)
+    )
 
     for loc in location_cols:
         if loc not in df_sorted.columns:
             continue
 
-        current_incident = None
-        incident_values = []
+        vals = df_sorted[loc]
+        in_range = vals.between(min_db, max_db, inclusive='both').fillna(False)
 
-        for idx, row in df_sorted.iterrows():
-            value = row[loc]
+        # Label consecutive True runs with a group id
+        group = (in_range != in_range.shift()).cumsum()
+        group = group.where(in_range)          # NaN outside the range
 
-            if pd.notna(value) and min_db <= value <= max_db:
-                if current_incident is None:
-                    timestamp_str = str(row['Date']) + ' ' + str(row['Time'])
-                    start_time = pd.to_datetime(timestamp_str)
-                    current_incident = {
-                        'location': loc,
-                        'start_time': start_time,
-                        'start_date': row['Date'],
-                        'start_time_only': row['Time']
-                    }
-                    incident_values = [value]
-                else:
-                    incident_values.append(value)
-            else:
-                if current_incident is not None and len(incident_values) >= duration_minutes:
-                    prev_row = df_sorted.iloc[df_sorted.index.get_loc(idx) - 1]
-                    timestamp_str = str(prev_row['Date']) + ' ' + str(prev_row['Time'])
-                    end_time = pd.to_datetime(timestamp_str)
-                    incidents.append({
-                        'location': current_incident['location'],
-                        'start_time': current_incident['start_time'],
-                        'end_time': end_time,
-                        'duration': len(incident_values),
-                        'peak_db': max(incident_values),
-                        'avg_db': sum(incident_values) / len(incident_values)
-                    })
-                current_incident = None
-                incident_values = []
-
-        if current_incident is not None and len(incident_values) >= duration_minutes:
-            last_row = df_sorted.iloc[-1]
-            timestamp_str = str(last_row['Date']) + ' ' + str(last_row['Time'])
-            end_time = pd.to_datetime(timestamp_str)
+        for gid, idx_group in df_sorted.groupby(group):
+            if len(idx_group) < duration_minutes:
+                continue
+            incident_vals = idx_group[loc].dropna()
+            if incident_vals.empty:
+                continue
             incidents.append({
-                'location': current_incident['location'],
-                'start_time': current_incident['start_time'],
-                'end_time': end_time,
-                'duration': len(incident_values),
-                'peak_db': max(incident_values),
-                'avg_db': sum(incident_values) / len(incident_values)
+                'location': loc,
+                'start_time': idx_group['_dt'].iloc[0],
+                'end_time':   idx_group['_dt'].iloc[-1],
+                'duration':   len(idx_group),
+                'peak_db':    incident_vals.max(),
+                'avg_db':     incident_vals.mean(),
             })
 
     return incidents
@@ -231,15 +210,16 @@ def get_client():
     return create_client(url, key)
 
 
-def fetch_all_data(start_date=None, end_date=None, batch_size=1000) -> pd.DataFrame:
+def fetch_all_data(start_date=None, end_date=None, batch_size=1000, columns=None) -> pd.DataFrame:
     """Fetch ALL data matching date filters."""
     supabase = get_client()
     all_data = []
     offset = 0
+    select_cols = ",".join(["Date", "Time"] + columns) if columns else "*"
 
     try:
         while True:
-            query = supabase.table(DEFAULT_VIEW).select("*")
+            query = supabase.table(DEFAULT_VIEW).select(select_cols)
 
             if start_date:
                 query = query.gte("Date", str(start_date))
@@ -531,7 +511,10 @@ def main():
         value_filter_active = (vmin is not None) or (vmax is not None)
 
         with st.spinner("Loading data..."):
-            df_all = fetch_all_data(start_date, end_date)
+            if detect_persisted:
+                df_all = fetch_all_data(start_date, end_date, columns=selected_ids)
+            else:
+                df_all = fetch_all_data(start_date, end_date)
             filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
 
         if not filtered.empty:
