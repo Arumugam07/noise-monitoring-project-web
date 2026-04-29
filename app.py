@@ -39,7 +39,7 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view")
+DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
 PAGE_SIZE = 200
 
 
