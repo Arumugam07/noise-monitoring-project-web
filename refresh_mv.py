@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """
-Refresh wide_view_mv via direct Postgres connection (bypasses PostgREST timeout).
+Refresh wide_view_mv via Supabase RPC (HTTP) - works from GitHub Actions.
 """
-
 import os
 import sys
 import logging
-import psycopg2
+import requests
 
 logging.basicConfig(
     level=logging.INFO,
@@ -15,28 +14,30 @@ logging.basicConfig(
 log = logging.getLogger(__name__)
 
 def main():
-    db_url = os.getenv("DATABASE_URL")
+    url = os.getenv("SUPABASE_URL")
+    key = os.getenv("SUPABASE_ANON_KEY")
 
-    if not db_url:
-        log.error("DATABASE_URL not set. Get it from Supabase → Settings → Database → Connection string (URI mode).")
+    if not url or not key:
+        log.error("SUPABASE_URL or SUPABASE_ANON_KEY not set.")
         sys.exit(1)
 
-    log.info("Connecting directly to Postgres...")
+    log.info("Refreshing wide_view_mv via Supabase RPC...")
 
-    try:
-        # options=-c... sets statement_timeout=0 at connection level, bypassing PostgREST limits
-        conn = psycopg2.connect(db_url, options="-c statement_timeout=0")
-        conn.autocommit = True  # REFRESH MV cannot run inside a transaction
+    response = requests.post(
+        f"{url}/rest/v1/rpc/refresh_wide_view_mv",
+        headers={
+            "apikey": key,
+            "Authorization": f"Bearer {key}",
+            "Content-Type": "application/json",
+        },
+        json={},
+        timeout=300,  # 5 min timeout for large MVs
+    )
 
-        with conn.cursor() as cur:
-            log.info("Refreshing wide_view_mv...")
-            cur.execute("REFRESH MATERIALIZED VIEW public.wide_view_mv;")
-            log.info("✅ wide_view_mv refreshed successfully")
-
-        conn.close()
-
-    except Exception as e:
-        log.error(f"❌ Refresh failed: {e}")
+    if response.status_code == 200:
+        log.info("✅ wide_view_mv refreshed successfully")
+    else:
+        log.error(f"❌ Refresh failed: {response.status_code} - {response.text}")
         sys.exit(1)
 
 if __name__ == "__main__":
