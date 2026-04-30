@@ -1,9 +1,4 @@
 #!/usr/bin/env python3
-"""
-Hourly ETL - fetches TODAY's data (SGT) so dashboard stays current.
-Runs every hour via GitHub Actions.
-"""
-
 import os
 import time
 import logging
@@ -17,14 +12,13 @@ log = logging.getLogger("supabase-today")
 
 def main():
     load_dotenv()
-    
     api_base = os.getenv("API_BASE_URL", API_DEFAULT).rstrip("/")
     table = os.getenv("SUPABASE_TABLE", "meter_readings")
     supabase_url = os.environ["SUPABASE_URL"]
-    supabase_key = os.environ["SUPABASE_ANON_KEY"]
+    # Use service key to bypass RLS for writes; fall back to anon key
+    supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"]
     supabase = create_client(supabase_url, supabase_key)
 
-    # Fetch TODAY in SGT
     today = datetime.now(SGT).date()
     log.info(f"Fetching today's data: {today}")
 
