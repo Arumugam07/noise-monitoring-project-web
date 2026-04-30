@@ -127,26 +127,36 @@ def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> 
     """Upsert rows into Supabase in safe chunks."""
     if not rows:
         return 0
+
+    # Deduplicate by (location_id, reading_datetime) — keep last occurrence
+    seen = {}
+    for row in rows:
+        key = (row["location_id"], row["reading_datetime"])
+        seen[key] = row  # later value overwrites earlier duplicate
     
+    deduped = list(seen.values())
+    duplicates_removed = len(rows) - len(deduped)
+    if duplicates_removed > 0:
+        log.info(f"  🔄 Removed {duplicates_removed} duplicate rows before upsert")
+
     inserted = 0
     CHUNK = 1000
-    
-    for i in range(0, len(rows), CHUNK):
-        chunk = rows[i:i + CHUNK]
+
+    for i in range(0, len(deduped), CHUNK):
+        chunk = deduped[i:i + CHUNK]
         try:
             resp = supabase.table(table).upsert(
-                chunk, 
+                chunk,
                 on_conflict="location_id,reading_datetime"
             ).execute()
-            
+
             if isinstance(resp.data, list):
                 inserted += len(resp.data)
-                
+
         except Exception as e:
             log.error(f"Error upserting chunk {i}-{i+len(chunk)}: {e}")
-            # Continue with next chunk even if one fails
             continue
-    
+
     return inserted
 
 
