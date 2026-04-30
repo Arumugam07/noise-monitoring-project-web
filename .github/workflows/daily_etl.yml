@@ -1,36 +1,20 @@
 name: Daily Noise Data ETL
-
 on:
   schedule:
-    # Runs at 01:00 SGT daily (17:00 UTC previous day)
     - cron: '0 17 * * *'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 jobs:
   daily-etl:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Daily ETL
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          SUPABASE_TABLE: meter_readings
-        run: python supabase_daily.py
-
+        run: pip install requests
       - name: Refresh Materialized View
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
