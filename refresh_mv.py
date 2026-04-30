@@ -1,5 +1,11 @@
 #!/usr/bin/env python3
-import os, sys, logging, requests
+"""
+Refresh wide_view_mv via Supabase RPC (HTTP) - works from GitHub Actions.
+"""
+import os
+import sys
+import logging
+import requests
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger(__name__)
