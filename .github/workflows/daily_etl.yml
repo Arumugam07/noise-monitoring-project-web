@@ -24,9 +24,3 @@ jobs:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SUPABASE_TABLE: meter_readings
         run: python supabase_daily.py
-
-      - name: Refresh Materialized View
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python refresh_mv.py
