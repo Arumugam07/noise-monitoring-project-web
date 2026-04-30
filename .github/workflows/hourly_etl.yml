@@ -14,7 +14,17 @@ jobs:
         with:
           python-version: '3.11'
       - name: Install dependencies
-        run: pip install requests
+        run: pip install -r requirements.txt
+
+      - name: Run Today's ETL
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SUPABASE_TABLE: meter_readings
+        run: python supabase_today.py
+
       - name: Refresh Materialized View
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
