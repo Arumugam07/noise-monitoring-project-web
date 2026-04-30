@@ -17,9 +17,10 @@ jobs:
       - name: Run Today's ETL
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SUPABASE_TABLE: meter_readings
         run: python supabase_today.py
+        
       - name: Refresh Materialized View
         continue-on-error: true
         env:
