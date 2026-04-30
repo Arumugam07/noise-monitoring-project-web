@@ -43,7 +43,7 @@ def main():
     # Supabase client
     try:
         supabase_url = os.environ["SUPABASE_URL"]
-        supabase_key = os.environ["SUPABASE_ANON_KEY"]
+        supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"]
     except KeyError as e:
         log.error(f"Missing environment variable: {e}")
         log.error("Please set SUPABASE_URL and SUPABASE_ANON_KEY in your .env file")
