@@ -26,7 +26,7 @@ jobs:
       - name: Run Daily ETL
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SUPABASE_TABLE: meter_readings
         run: python supabase_daily.py
@@ -34,5 +34,5 @@ jobs:
       - name: Refresh Materialized View
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: python refresh_mv.py
