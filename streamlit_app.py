@@ -193,7 +193,7 @@ def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration
 
     return incidents
 
-
+@st.cache_resource(ttl=300)
 def get_client():
     """Create Supabase client from env or Streamlit secrets."""
     load_dotenv()
@@ -209,7 +209,7 @@ def get_client():
 
     return create_client(url, key)
 
-
+@st.cache_data(ttl=300)
 def fetch_all_data(start_date=None, end_date=None, batch_size=1000, columns=None) -> pd.DataFrame:
     """Fetch ALL data matching date filters."""
     supabase = get_client()
