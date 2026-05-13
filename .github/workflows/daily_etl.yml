@@ -16,11 +16,20 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
-      - name: Run Daily ETL
+      - name: Run Daily ETL (complete previous day)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
           SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SUPABASE_TABLE: meter_readings
-        run: python supabase_daily.py
+        run: python supabase_daily.py,
+
+      - name: Run Today's ETL (catch late data)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SUPABASE_TABLE: meter_readings
+        run: python supabase_today.py
