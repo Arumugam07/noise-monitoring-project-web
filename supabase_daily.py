@@ -11,6 +11,7 @@ from supabase import create_client
 from typing import List, Dict
 from supabase_common import API_DEFAULT, LOCATIONS, build_rows, upsert_rows, yesterday_sgt
 from datetime import datetime, timedelta
+from supabase_common import SGT
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
 log = logging.getLogger("supabase-daily")
