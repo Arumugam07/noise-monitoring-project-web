@@ -29,7 +29,10 @@ def main():
         return
 
     supabase = create_client(supabase_url, supabase_key)
-    today = datetime.now(SGT).date()
+    now_sgt = datetime.now(SGT)
+    today = now_sgt.date()
+    
+    log.info(f"Current SGT Timestamp: {now_sgt.strftime('%Y-%m-%d %H:%M:%S')}")
 
     log.info("=" * 70)
     log.info("HOURLY ETL STARTING")
