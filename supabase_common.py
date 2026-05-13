@@ -63,7 +63,12 @@ log = logging.getLogger("supabase-common")
 
 def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, object]]:
     """Build per-minute rows for a Singapore calendar day for one location."""
-    url = f"{api_base}/{loc['ID']}?start={day.isoformat()}"
+    # Explicitly calculate the 24-hour SGT calendar bounds for the requested date
+    start_str = f"{day.isoformat()}T00:00:00"
+    end_str = f"{day.isoformat()}T23:59:59"
+    
+    # Construct a clean URL that explicitly sets the start and end query bounds
+    url = f"{api_base}/{loc['ID']}?start={start_str}&end={end_str}"
     
     try:
         log.debug(f"Fetching: {url}")
