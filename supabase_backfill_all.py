@@ -53,7 +53,8 @@ def main():
     
     # Date range: from yesterday back to May 1, 2025
     end_date = yesterday_sgt()
-    start_date = date(2025, 5, 1)
+    start_date_str = os.getenv("BACKFILL_START_DATE", "2025-05-01")
+    start_date = date.fromisoformat(start_date_str)
     
     log.info("=" * 70)
     log.info("BACKFILL STARTING")
