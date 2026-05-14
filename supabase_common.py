@@ -53,7 +53,6 @@ LOCATIONS: List[Dict[str, str]] = [
     {"ID":"15820","Name":"Norcom II Tower 4"},
     {"ID":"15821","Name":"Blk 444 Choa Chu Kang Avenue 4"},
     {"ID":"15999","Name":"BLK 654B Punggol Drive"},
-    {"ID":"16026","Name":"BLK 132B Tengah Garden Avenue"}, # keep for historical data
     {"ID":"16367","Name":"BLK 132B Tengah Garden Avenue (Temp)"},  # replacement
     {"ID":"16004","Name":"BLK 206A Punggol Place"},
     {"ID":"16005","Name":"Woodlands 11"},
