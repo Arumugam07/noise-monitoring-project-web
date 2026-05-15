@@ -1,0 +1,61 @@
+# .github/workflows/monthly_summary.yml
+#
+# Runs the monthly persisted noise summary ETL on two triggers:
+#   1. Every day at 02:00 UTC (10:00 SGT) — only the current month gets
+#      recomputed; past months are skipped automatically.
+#   2. Manual trigger (workflow_dispatch) — useful for backfilling history
+#      or after changing location_presets.py.
+#
+# Required GitHub Secrets (set in repo → Settings → Secrets → Actions):
+#   SUPABASE_URL          – your Supabase project URL
+#   SUPABASE_SERVICE_KEY  – service role key (NOT the anon key)
+#
+# Optional:
+#   SUPABASE_WIDE_VIEW    – defaults to wide_view_mv if not set
+ 
+name: Compute Monthly Noise Summary
+ 
+on:
+  schedule:
+    - cron: "0 2 * * *"   # 02:00 UTC = 10:00 SGT, every day
+ 
+  workflow_dispatch:        # allow manual runs from GitHub UI
+    inputs:
+      reason:
+        description: "Why are you running this manually?"
+        required: false
+        default: "Manual backfill or preset change"
+ 
+jobs:
+  compute:
+    name: Run ETL — monthly_persisted_summary
+    runs-on: ubuntu-latest
+    timeout-minutes: 60      # generous limit; should finish well under 30 min
+ 
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+ 
+      - name: Set up Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+ 
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install supabase pandas python-dotenv
+ 
+      - name: Run ETL script
+        env:
+          SUPABASE_URL:         ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          SUPABASE_WIDE_VIEW:   ${{ vars.SUPABASE_WIDE_VIEW || 'wide_view_mv' }}
+        run: |
+          python etl/compute_monthly_summary.py
+ 
+      - name: Report result
+        if: always()
+        run: |
+          echo "Workflow finished with status: ${{ job.status }}"
