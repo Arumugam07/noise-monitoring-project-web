@@ -511,367 +511,368 @@ def main():
 
     tab_dashboard, tab_yearly = st.tabs(["📊 Dashboard", "📅 Yearly Analysis"])
 
-    try:
-        value_filter_active = (vmin is not None) or (vmax is not None)
+    with tab_dashboard:
 
-        with st.spinner("Loading data..."):
-            if detect_persisted:
-                df_all = fetch_all_data(start_date, end_date, columns=selected_ids)
-            else:
-                df_all = fetch_all_data(start_date, end_date)
-            filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
+        try:
+            value_filter_active = (vmin is not None) or (vmax is not None)
 
-        if not filtered.empty:
-            if value_filter_active:
-                # === FILTER RESULTS SECTION ===
-                st.markdown("### 🔍 Filter Results")
-                st.caption("Number of readings found for each location within your filter criteria")
+            with st.spinner("Loading data..."):
+                if detect_persisted:
+                    df_all = fetch_all_data(start_date, end_date, columns=selected_ids)
+                else:
+                    df_all = fetch_all_data(start_date, end_date)
+                filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
 
-                filter_info = []
-                if vmin is not None:
-                    filter_info.append(f"Min: {vmin} dB")
-                if vmax is not None:
-                    filter_info.append(f"Max: {vmax} dB")
-                st.info(f"📊 Filter Range: **{' | '.join(filter_info)}**")
+            if not filtered.empty:
+                if value_filter_active:
+                    # === FILTER RESULTS SECTION ===
+                    st.markdown("### 🔍 Filter Results")
+                    st.caption("Number of readings found for each location within your filter criteria")
 
-                location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
-                location_counts = {}
-                for loc in location_cols:
-                    if loc in filtered.columns:
-                        location_counts[loc] = filtered[loc].notna().sum()
+                    filter_info = []
+                    if vmin is not None:
+                        filter_info.append(f"Min: {vmin} dB")
+                    if vmax is not None:
+                        filter_info.append(f"Max: {vmax} dB")
+                    st.info(f"📊 Filter Range: **{' | '.join(filter_info)}**")
 
-                sorted_locations = sorted(location_counts.items(), key=lambda x: x[1], reverse=True)
+                    location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
+                    location_counts = {}
+                    for loc in location_cols:
+                        if loc in filtered.columns:
+                            location_counts[loc] = filtered[loc].notna().sum()
 
-                for i in range(0, len(sorted_locations), 3):
-                    cols = st.columns(3)
-                    for j, col_obj in enumerate(cols):
-                        if i + j < len(sorted_locations):
-                            loc, count = sorted_locations[i + j]
-                            if count == 0:
-                                color = "#6c757d"; intensity = "None"
-                            elif count < 10:
-                                color = "#28a745"; intensity = "Low"
-                            elif count < 50:
-                                color = "#ffc107"; intensity = "Medium"
-                            elif count < 100:
-                                color = "#fd7e14"; intensity = "High"
-                            else:
-                                color = "#dc3545"; intensity = "Very High"
+                    sorted_locations = sorted(location_counts.items(), key=lambda x: x[1], reverse=True)
 
-                            with col_obj:
-                                st.markdown(f"""
-                                    <div class="latest-reading-card" style="border-left-color: {color};">
-                                        <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">📍 {loc}</div>
-                                        <div style="font-size: 2.5rem; font-weight: bold; color: {color}; margin: 0.5rem 0;">
-                                            {count} <span style="font-size: 1.2rem;">times</span>
-                                        </div>
-                                        <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px;
-                                             background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
-                                            {intensity} Frequency
-                                        </div>
-                                    </div>
-                                """, unsafe_allow_html=True)
-
-            else:
-                # === SENSOR HEALTH MONITORING SECTION ===
-                location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
-                is_single_date = (start_date == end_date)
-
-                if is_single_date:
-                    st.markdown(f"### 📅 Sensor Status for {start_date.strftime('%B %d, %Y')}")
-                    st.caption(f"Total readings expected: {READINGS_PER_DAY:,} per sensor (one reading per minute)")
-
-                    health = get_sensor_health_single_date(filtered, start_date, location_cols)
-
-                    online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
-                    degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
-                    offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
-                    system_health = (online_count / len(health) * 100) if health else 0
-
-                    st.info(f"**System Health: {system_health:.0f}%** | ✅ {online_count} Online | ⚠️ {degraded_count} Degraded | ❌ {offline_count} Offline")
-
-                    status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
-                    sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], x[0]))
-
-                    for i in range(0, len(sorted_sensors), 3):
+                    for i in range(0, len(sorted_locations), 3):
                         cols = st.columns(3)
-                        for j in range(3):
-                            if i + j < len(sorted_sensors):
-                                loc, h = sorted_sensors[i + j]
-                                colors = {
-                                    'ONLINE': {'bg': '#d4edda', 'border': '#28a745', 'text': '#155724'},
-                                    'DEGRADED': {'bg': '#fff3cd', 'border': '#ffc107', 'text': '#856404'},
-                                    'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
-                                }
-                                color = colors[h['status']]
-                                icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
-                                messages = {'ONLINE': 'Fully operational', 'DEGRADED': 'Monitor closely', 'OFFLINE': 'Needs maintenance'}
+                        for j, col_obj in enumerate(cols):
+                            if i + j < len(sorted_locations):
+                                loc, count = sorted_locations[i + j]
+                                if count == 0:
+                                    color = "#6c757d"; intensity = "None"
+                                elif count < 10:
+                                    color = "#28a745"; intensity = "Low"
+                                elif count < 50:
+                                    color = "#ffc107"; intensity = "Medium"
+                                elif count < 100:
+                                    color = "#fd7e14"; intensity = "High"
+                                else:
+                                    color = "#dc3545"; intensity = "Very High"
 
-                                with cols[j]:
+                                with col_obj:
                                     st.markdown(f"""
-                                        <div style="background-color: {color['bg']}; border-left: 5px solid {color['border']};
-                                             border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 160px;
-                                             display: flex; flex-direction: column; justify-content: space-between;">
-                                            <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
-                                            <div style="font-size: 1.5rem; font-weight: bold; color: {color['text']};">
-                                                {icons[h['status']]} {h['status']}
+                                        <div class="latest-reading-card" style="border-left-color: {color};">
+                                            <div style="font-size: 0.9rem; font-weight: 600; color: #333; margin-bottom: 0.5rem;">📍 {loc}</div>
+                                            <div style="font-size: 2.5rem; font-weight: bold; color: {color}; margin: 0.5rem 0;">
+                                                {count} <span style="font-size: 1.2rem;">times</span>
                                             </div>
-                                            <div style="font-size: 1.1rem; font-weight: 600; color: #333;">
-                                                {h['reading_count']:,}/{READINGS_PER_DAY:,}
+                                            <div style="display: inline-block; padding: 0.25rem 0.75rem; border-radius: 12px;
+                                                 background-color: {color}; color: white; font-size: 0.85rem; font-weight: 600;">
+                                                {intensity} Frequency
                                             </div>
-                                            <div style="font-size: 0.9rem; color: #666;">{h['completeness']:.1f}% complete</div>
-                                            <div style="font-size: 0.8rem; color: {color['text']};">{messages[h['status']]}</div>
                                         </div>
                                     """, unsafe_allow_html=True)
 
                 else:
-                    total_days = (end_date - start_date).days + 1
-                    expected_timestamps = READINGS_PER_DAY * total_days
-                    actual_timestamps = len(filtered)
+                    # === SENSOR HEALTH MONITORING SECTION ===
+                    location_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
+                    is_single_date = (start_date == end_date)
 
-                    total_actual_readings = 0
-                    total_expected_readings = expected_timestamps * len(location_cols)
-                    for col in location_cols:
-                        if col in filtered.columns:
-                            total_actual_readings += filtered[col].notna().sum()
+                    if is_single_date:
+                        st.markdown(f"### 📅 Sensor Status for {start_date.strftime('%B %d, %Y')}")
+                        st.caption(f"Total readings expected: {READINGS_PER_DAY:,} per sensor (one reading per minute)")
 
-                    if detect_persisted:
-                        st.markdown("---")
-                        st.markdown(f"### 🔊 Persisted Noise Incidents ({persist_min_db}-{persist_max_db}dB, {persist_duration}+ min)")
+                        health = get_sensor_health_single_date(filtered, start_date, location_cols)
 
-                        with st.spinner("Analyzing noise patterns..."):
-                            incidents = detect_persisted_noise_incidents(filtered, location_cols, persist_min_db, persist_max_db, persist_duration)
+                        online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
+                        degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
+                        offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
+                        system_health = (online_count / len(health) * 100) if health else 0
 
-                        if incidents:
-                            num_locations = len(set(inc['location'] for inc in incidents))
-                            st.success(f"🔍 Found **{len(incidents)}** incidents across **{num_locations}** locations")
+                        st.info(f"**System Health: {system_health:.0f}%** | ✅ {online_count} Online | ⚠️ {degraded_count} Degraded | ❌ {offline_count} Offline")
 
-                            incidents_df = pd.DataFrame(incidents)
-                            incidents_df['start_time_display'] = incidents_df['start_time'].dt.strftime('%b %d, %H:%M')
-                            incidents_df['end_time_display'] = incidents_df['end_time'].dt.strftime('%b %d, %H:%M')
-                            incidents_df['peak_db'] = incidents_df['peak_db'].round(1)
-                            incidents_df['avg_db'] = incidents_df['avg_db'].round(1)
+                        status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
+                        sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], x[0]))
 
-                            display_df = incidents_df[['location', 'start_time_display', 'end_time_display', 'duration', 'peak_db', 'avg_db']].copy()
-                            display_df.columns = ['Location', 'Start Time', 'End Time', 'Duration (min)', 'Peak dB', 'Avg dB']
-                            st.dataframe(display_df, use_container_width=True, hide_index=True)
-                        else:
-                            st.info(f"✓ No persisted noise incidents detected for {persist_min_db}-{persist_max_db}dB lasting {persist_duration}+ minutes")
+                        for i in range(0, len(sorted_sensors), 3):
+                            cols = st.columns(3)
+                            for j in range(3):
+                                if i + j < len(sorted_sensors):
+                                    loc, h = sorted_sensors[i + j]
+                                    colors = {
+                                        'ONLINE': {'bg': '#d4edda', 'border': '#28a745', 'text': '#155724'},
+                                        'DEGRADED': {'bg': '#fff3cd', 'border': '#ffc107', 'text': '#856404'},
+                                        'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
+                                    }
+                                    color = colors[h['status']]
+                                    icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
+                                    messages = {'ONLINE': 'Fully operational', 'DEGRADED': 'Monitor closely', 'OFFLINE': 'Needs maintenance'}
 
-                        st.markdown("---")
+                                    with cols[j]:
+                                        st.markdown(f"""
+                                            <div style="background-color: {color['bg']}; border-left: 5px solid {color['border']};
+                                                 border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 160px;
+                                                 display: flex; flex-direction: column; justify-content: space-between;">
+                                                <div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 {loc}</div>
+                                                <div style="font-size: 1.5rem; font-weight: bold; color: {color['text']};">
+                                                    {icons[h['status']]} {h['status']}
+                                                </div>
+                                                <div style="font-size: 1.1rem; font-weight: 600; color: #333;">
+                                                    {h['reading_count']:,}/{READINGS_PER_DAY:,}
+                                                </div>
+                                                <div style="font-size: 0.9rem; color: #666;">{h['completeness']:.1f}% complete</div>
+                                                <div style="font-size: 0.8rem; color: {color['text']};">{messages[h['status']]}</div>
+                                            </div>
+                                        """, unsafe_allow_html=True)
 
-                    st.markdown(f"### 🔴 Sensor Health Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')})")
-                    st.caption(
-                        f"Analysis period: **{total_days} days** | "
-                        f"Timestamps: **{actual_timestamps:,}** of **{expected_timestamps:,}** ({actual_timestamps/expected_timestamps*100:.1f}%) | "
-                        f"Total readings: **{total_actual_readings:,}** of **{total_expected_readings:,}** ({total_actual_readings/total_expected_readings*100:.1f}%)"
-                    )
-                    st.caption("📊 Status based on data completeness: ✅ Online (≥70%) | ⚠️ Degraded (40-70%) | ❌ Offline (<40%)")
+                    else:
+                        total_days = (end_date - start_date).days + 1
+                        expected_timestamps = READINGS_PER_DAY * total_days
+                        actual_timestamps = len(filtered)
 
-                    health = get_sensor_health_date_range(filtered, start_date, end_date, location_cols)
+                        total_actual_readings = 0
+                        total_expected_readings = expected_timestamps * len(location_cols)
+                        for col in location_cols:
+                            if col in filtered.columns:
+                                total_actual_readings += filtered[col].notna().sum()
 
-                    online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
-                    degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
-                    offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
-                    system_health = (online_count / len(health) * 100) if health else 0
+                        if detect_persisted:
+                            st.markdown("---")
+                            st.markdown(f"### 🔊 Persisted Noise Incidents ({persist_min_db}-{persist_max_db}dB, {persist_duration}+ min)")
 
-                    st.info(f"**Overall System Health: {system_health:.0f}%** | ✅ {online_count} Operational | ⚠️ {degraded_count} Degraded | ❌ {offline_count} Critical")
+                            with st.spinner("Analyzing noise patterns..."):
+                                incidents = detect_persisted_noise_incidents(filtered, location_cols, persist_min_db, persist_max_db, persist_duration)
 
-                    incidents_by_location = {}
-                    if detect_persisted and 'incidents' in locals():
-                        for incident in incidents:
-                            loc = incident['location']
-                            if loc not in incidents_by_location:
-                                incidents_by_location[loc] = 0
-                            incidents_by_location[loc] += 1
+                            if incidents:
+                                num_locations = len(set(inc['location'] for inc in incidents))
+                                st.success(f"🔍 Found **{len(incidents)}** incidents across **{num_locations}** locations")
 
-                    status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
-                    sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], -len(x[1]['offline_dates'])))
+                                incidents_df = pd.DataFrame(incidents)
+                                incidents_df['start_time_display'] = incidents_df['start_time'].dt.strftime('%b %d, %H:%M')
+                                incidents_df['end_time_display'] = incidents_df['end_time'].dt.strftime('%b %d, %H:%M')
+                                incidents_df['peak_db'] = incidents_df['peak_db'].round(1)
+                                incidents_df['avg_db'] = incidents_df['avg_db'].round(1)
 
-                    for i in range(0, len(sorted_sensors), 3):
-                        cols = st.columns(3)
-                        for j in range(3):
-                            if i + j < len(sorted_sensors):
-                                loc, h = sorted_sensors[i + j]
-                                colors = {
-                                    'ONLINE': {'bg': '#d4edda', 'border': '#28a745', 'text': '#155724'},
-                                    'DEGRADED': {'bg': '#fff3cd', 'border': '#ffc107', 'text': '#856404'},
-                                    'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
-                                }
-                                color = colors[h['status']]
-                                bg_color = color['bg']
-                                border_color = color['border']
-                                text_color = color['text']
+                                display_df = incidents_df[['location', 'start_time_display', 'end_time_display', 'duration', 'peak_db', 'avg_db']].copy()
+                                display_df.columns = ['Location', 'Start Time', 'End Time', 'Duration (min)', 'Peak dB', 'Avg dB']
+                                st.dataframe(display_df, use_container_width=True, hide_index=True)
+                            else:
+                                st.info(f"✓ No persisted noise incidents detected for {persist_min_db}-{persist_max_db}dB lasting {persist_duration}+ minutes")
 
-                                icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
-                                severities = {'ONLINE': 'Operational', 'DEGRADED': 'Monitor', 'OFFLINE': 'CRITICAL'}
-                                icon = icons[h['status']]
-                                severity = severities[h['status']]
+                            st.markdown("---")
 
-                                if h['offline_dates']:
-                                    dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
-                                    issues_text = "Offline: " + dates_str
-                                elif h['degraded_dates']:
-                                    dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
-                                    issues_text = "Degraded: " + dates_str
-                                else:
-                                    issues_text = "No days offline"
+                        st.markdown(f"### 🔴 Sensor Health Summary ({start_date.strftime('%b %d')} - {end_date.strftime('%b %d, %Y')})")
+                        st.caption(
+                            f"Analysis period: **{total_days} days** | "
+                            f"Timestamps: **{actual_timestamps:,}** of **{expected_timestamps:,}** ({actual_timestamps/expected_timestamps*100:.1f}%) | "
+                            f"Total readings: **{total_actual_readings:,}** of **{total_expected_readings:,}** ({total_actual_readings/total_expected_readings*100:.1f}%)"
+                        )
+                        st.caption("📊 Status based on data completeness: ✅ Online (≥70%) | ⚠️ Degraded (40-70%) | ❌ Offline (<40%)")
 
-                                incident_count = incidents_by_location.get(loc, 0)
+                        health = get_sensor_health_date_range(filtered, start_date, end_date, location_cols)
 
-                                card_html = '<div style="background-color: ' + bg_color + '; border-left: 5px solid ' + border_color + '; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px; display: flex; flex-direction: column; justify-content: space-between;">'
-                                card_html += '<div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 ' + loc + '</div>'
-                                card_html += '<div style="font-size: 1.3rem; font-weight: bold; color: ' + text_color + ';">' + icon + ' ' + h['status'] + ' (' + str(int(h['completeness_pct'])) + '%)</div>'
-                                card_html += '<div style="font-size: 0.9rem; color: #333;"><strong>Days online:</strong> ' + str(h['online_days']) + '/' + str(h['total_days']) + '</div>'
-                                card_html += '<div style="font-size: 0.85rem; color: #666;"><strong>Readings:</strong> ' + "{:,}".format(h['total_readings']) + '/' + "{:,}".format(h['expected_readings']) + '</div>'
-                                if detect_persisted and incident_count > 0:
-                                    card_html += '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: ' + str(incident_count) + ' incidents</div>'
-                                card_html += '<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>'
-                                card_html += '<div style="font-size: 0.8rem; font-weight: 600; color: ' + text_color + '; margin-top: 0.25rem;">' + severity + '</div>'
-                                card_html += '</div>'
+                        online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
+                        degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
+                        offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
+                        system_health = (online_count / len(health) * 100) if health else 0
 
-                                with cols[j]:
-                                    st.markdown(card_html, unsafe_allow_html=True)
+                        st.info(f"**Overall System Health: {system_health:.0f}%** | ✅ {online_count} Operational | ⚠️ {degraded_count} Degraded | ❌ {offline_count} Critical")
 
-            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                        incidents_by_location = {}
+                        if detect_persisted and 'incidents' in locals():
+                            for incident in incidents:
+                                loc = incident['location']
+                                if loc not in incidents_by_location:
+                                    incidents_by_location[loc] = 0
+                                incidents_by_location[loc] += 1
 
-            # === SUMMARY STATISTICS ===
-            st.markdown("### 📊 Summary Statistics")
-            st.caption("Overview of the current data selection")
+                        status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
+                        sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], -len(x[1]['offline_dates'])))
 
-            col1, col2, col3, col4 = st.columns(4)
-            with col1:
-                st.metric(label="Total Records", value=f"{len(filtered):,}")
+                        for i in range(0, len(sorted_sensors), 3):
+                            cols = st.columns(3)
+                            for j in range(3):
+                                if i + j < len(sorted_sensors):
+                                    loc, h = sorted_sensors[i + j]
+                                    colors = {
+                                        'ONLINE': {'bg': '#d4edda', 'border': '#28a745', 'text': '#155724'},
+                                        'DEGRADED': {'bg': '#fff3cd', 'border': '#ffc107', 'text': '#856404'},
+                                        'OFFLINE': {'bg': '#f8d7da', 'border': '#dc3545', 'text': '#721c24'}
+                                    }
+                                    color = colors[h['status']]
+                                    bg_color = color['bg']
+                                    border_color = color['border']
+                                    text_color = color['text']
 
-            numeric_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
-            if numeric_cols:
-                all_values = []
-                for col in numeric_cols:
-                    all_values.extend(filtered[col].dropna().tolist())
+                                    icons = {'ONLINE': '✅', 'DEGRADED': '⚠️', 'OFFLINE': '❌'}
+                                    severities = {'ONLINE': 'Operational', 'DEGRADED': 'Monitor', 'OFFLINE': 'CRITICAL'}
+                                    icon = icons[h['status']]
+                                    severity = severities[h['status']]
 
-                if all_values:
-                    avg_val = sum(all_values) / len(all_values)
-                    with col2:
-                        st.metric(label="Average Reading", value=f"{avg_val:.1f} dB")
-                    with col3:
-                        st.metric(label="Min Reading", value=f"{min(all_values):.1f} dB")
-                    with col4:
-                        st.metric(label="Max Reading", value=f"{max(all_values):.1f} dB")
+                                    if h['offline_dates']:
+                                        dates_str = ', '.join([d.strftime('%b %d') for d in h['offline_dates']])
+                                        issues_text = "Offline: " + dates_str
+                                    elif h['degraded_dates']:
+                                        dates_str = ', '.join([d.strftime('%b %d') for d in h['degraded_dates']])
+                                        issues_text = "Degraded: " + dates_str
+                                    else:
+                                        issues_text = "No days offline"
 
-            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                                    incident_count = incidents_by_location.get(loc, 0)
 
-            # === DATA TABLE — all rows, no pagination ===
-            st.markdown("### 📋 Detailed Data Table")
-            st.caption(f"Showing all **{len(filtered):,}** records. Sorted by most recent first. Scroll down to see more.")
+                                    card_html = '<div style="background-color: ' + bg_color + '; border-left: 5px solid ' + border_color + '; border-radius: 8px; padding: 1rem; margin-bottom: 0.5rem; height: 220px; display: flex; flex-direction: column; justify-content: space-between;">'
+                                    card_html += '<div style="font-size: 0.85rem; font-weight: 600; color: #333;">📍 ' + loc + '</div>'
+                                    card_html += '<div style="font-size: 1.3rem; font-weight: bold; color: ' + text_color + ';">' + icon + ' ' + h['status'] + ' (' + str(int(h['completeness_pct'])) + '%)</div>'
+                                    card_html += '<div style="font-size: 0.9rem; color: #333;"><strong>Days online:</strong> ' + str(h['online_days']) + '/' + str(h['total_days']) + '</div>'
+                                    card_html += '<div style="font-size: 0.85rem; color: #666;"><strong>Readings:</strong> ' + "{:,}".format(h['total_readings']) + '/' + "{:,}".format(h['expected_readings']) + '</div>'
+                                    if detect_persisted and incident_count > 0:
+                                        card_html += '<div style="font-size: 0.85rem; color: #d63384; margin-top: 0.25rem;">⚠️ Persisted noise: ' + str(incident_count) + ' incidents</div>'
+                                    card_html += '<div style="font-size: 0.75rem; color: ' + text_color + '; margin-top: 0.25rem;">' + issues_text + '</div>'
+                                    card_html += '<div style="font-size: 0.8rem; font-weight: 600; color: ' + text_color + '; margin-top: 0.25rem;">' + severity + '</div>'
+                                    card_html += '</div>'
 
-            display_df = filtered.copy()
-            if "Date" in display_df.columns:
-                display_df["Date"] = pd.to_datetime(display_df["Date"]).dt.strftime("%Y-%m-%d")
-            if "Time" in display_df.columns:
-                display_df["Time"] = display_df["Time"].astype(str)
+                                    with cols[j]:
+                                        st.markdown(card_html, unsafe_allow_html=True)
 
-            numeric_cols = [c for c in display_df.columns if c not in ("Date", "Time")]
-            format_dict = {col: "{:.2f}" for col in numeric_cols if col in display_df.columns}
+                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
 
-            if format_dict:
-                styled_df = display_df.style.format(format_dict, na_rep="")
-                st.dataframe(styled_df, use_container_width=True, height=600, hide_index=True)
-            else:
-                st.dataframe(display_df, use_container_width=True, height=600, hide_index=True)
+                # === SUMMARY STATISTICS ===
+                st.markdown("### 📊 Summary Statistics")
+                st.caption("Overview of the current data selection")
 
-            # === EXPORT SECTION ===
-            st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
-            st.markdown("### 📥 Export Data")
-            st.caption("Download the current filtered dataset in your preferred format")
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric(label="Total Records", value=f"{len(filtered):,}")
 
-            col_dl1, col_dl2 = st.columns(2)
+                numeric_cols = [c for c in filtered.columns if c not in ("Date", "Time")]
+                if numeric_cols:
+                    all_values = []
+                    for col in numeric_cols:
+                        all_values.extend(filtered[col].dropna().tolist())
 
-            with col_dl1:
-                csv = filtered.to_csv(index=False)
-                timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
-                st.download_button(
-                    label="📄 Download as CSV",
-                    data=csv,
-                    file_name=f"noise_readings_{timestamp}.csv",
-                    mime="text/csv",
-                    use_container_width=True,
-                )
+                    if all_values:
+                        avg_val = sum(all_values) / len(all_values)
+                        with col2:
+                            st.metric(label="Average Reading", value=f"{avg_val:.1f} dB")
+                        with col3:
+                            st.metric(label="Min Reading", value=f"{min(all_values):.1f} dB")
+                        with col4:
+                            st.metric(label="Max Reading", value=f"{max(all_values):.1f} dB")
 
-            with col_dl2:
-                try:
-                    excel_buffer = io.BytesIO()
-                    filtered.to_excel(excel_buffer, index=False, engine="openpyxl")
-                    excel_buffer.seek(0)
+                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+
+                # === DATA TABLE — all rows, no pagination ===
+                st.markdown("### 📋 Detailed Data Table")
+                st.caption(f"Showing all **{len(filtered):,}** records. Sorted by most recent first. Scroll down to see more.")
+
+                display_df = filtered.copy()
+                if "Date" in display_df.columns:
+                    display_df["Date"] = pd.to_datetime(display_df["Date"]).dt.strftime("%Y-%m-%d")
+                if "Time" in display_df.columns:
+                    display_df["Time"] = display_df["Time"].astype(str)
+
+                numeric_cols = [c for c in display_df.columns if c not in ("Date", "Time")]
+                format_dict = {col: "{:.2f}" for col in numeric_cols if col in display_df.columns}
+
+                if format_dict:
+                    styled_df = display_df.style.format(format_dict, na_rep="")
+                    st.dataframe(styled_df, use_container_width=True, height=600, hide_index=True)
+                else:
+                    st.dataframe(display_df, use_container_width=True, height=600, hide_index=True)
+
+                # === EXPORT SECTION ===
+                st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
+                st.markdown("### 📥 Export Data")
+                st.caption("Download the current filtered dataset in your preferred format")
+
+                col_dl1, col_dl2 = st.columns(2)
+
+                with col_dl1:
+                    csv = filtered.to_csv(index=False)
+                    timestamp = pd.Timestamp.now().strftime("%Y%m%d_%H%M%S")
                     st.download_button(
-                        label="📊 Download as Excel",
-                        data=excel_buffer,
-                        file_name=f"noise_readings_{timestamp}.xlsx",
-                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        label="📄 Download as CSV",
+                        data=csv,
+                        file_name=f"noise_readings_{timestamp}.csv",
+                        mime="text/csv",
                         use_container_width=True,
                     )
-                except Exception:
-                    st.info("💡 Excel export temporarily unavailable. Please use CSV format.")
 
-        else:
-            st.warning("⚠️ No data found matching your filters.")
-            st.info("""
-            ### 💡 Suggestions:
-            - **Expand Date Range**: Try selecting a wider date range
-            - **Check Locations**: Ensure you have selected at least one location
-            - **Adjust Value Filters**: Remove or modify min/max value constraints
-            - **Verify Data**: Ensure data exists in the database for the selected period
-            """)
+                with col_dl2:
+                    try:
+                        excel_buffer = io.BytesIO()
+                        filtered.to_excel(excel_buffer, index=False, engine="openpyxl")
+                        excel_buffer.seek(0)
+                        st.download_button(
+                            label="📊 Download as Excel",
+                            data=excel_buffer,
+                            file_name=f"noise_readings_{timestamp}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                            use_container_width=True,
+                        )
+                    except Exception:
+                        st.info("💡 Excel export temporarily unavailable. Please use CSV format.")
 
-    except Exception as e:
-        st.error("⚠️ Database Connection Error")
+            else:
+                st.warning("⚠️ No data found matching your filters.")
+                st.info("""
+                ### 💡 Suggestions:
+                - **Expand Date Range**: Try selecting a wider date range
+                - **Check Locations**: Ensure you have selected at least one location
+                - **Adjust Value Filters**: Remove or modify min/max value constraints
+                - **Verify Data**: Ensure data exists in the database for the selected period
+                """)
 
-        with st.expander("🔧 Setup Instructions", expanded=True):
-            st.markdown("""
-            **The database might not be configured yet, or credentials are missing.**
+        except Exception as e:
+            st.error("⚠️ Database Connection Error")
 
-            ### Setup Steps:
+            with st.expander("🔧 Setup Instructions", expanded=True):
+                st.markdown("""
+                **The database might not be configured yet, or credentials are missing.**
 
-            1. **Create the materialized view** in your Supabase SQL Editor:
+                ### Setup Steps:
 
-            ```sql
-            DROP MATERIALIZED VIEW IF EXISTS public.wide_view_mv;
+                1. **Create the materialized view** in your Supabase SQL Editor:
 
-            CREATE MATERIALIZED VIEW public.wide_view_mv AS
-            SELECT
-              DATE(reading_datetime) as "Date",
-              DATE_TRUNC('minute', reading_datetime)::time as "Time",
-              MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
-              MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
-              MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
-              MAX(CASE WHEN location_id = '14542' THEN reading_value END) as "14542",
-              MAX(CASE WHEN location_id = '15725' THEN reading_value END) as "15725",
-              MAX(CASE WHEN location_id = '16032' THEN reading_value END) as "16032",
-              MAX(CASE WHEN location_id = '16045' THEN reading_value END) as "16045",
-              MAX(CASE WHEN location_id = '15820' THEN reading_value END) as "15820",
-              MAX(CASE WHEN location_id = '15821' THEN reading_value END) as "15821",
-              MAX(CASE WHEN location_id = '15999' THEN reading_value END) as "15999",
-              MAX(CASE WHEN location_id = '16026' THEN reading_value END) as "16026",
-              MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
-              MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
-            FROM public.meter_readings
-            GROUP BY DATE(reading_datetime), DATE_TRUNC('minute', reading_datetime);
+                ```sql
+                DROP MATERIALIZED VIEW IF EXISTS public.wide_view_mv;
 
-            CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
+                CREATE MATERIALIZED VIEW public.wide_view_mv AS
+                SELECT
+                  DATE(reading_datetime) as "Date",
+                  DATE_TRUNC('minute', reading_datetime)::time as "Time",
+                  MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
+                  MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
+                  MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
+                  MAX(CASE WHEN location_id = '14542' THEN reading_value END) as "14542",
+                  MAX(CASE WHEN location_id = '15725' THEN reading_value END) as "15725",
+                  MAX(CASE WHEN location_id = '16032' THEN reading_value END) as "16032",
+                  MAX(CASE WHEN location_id = '16045' THEN reading_value END) as "16045",
+                  MAX(CASE WHEN location_id = '15820' THEN reading_value END) as "15820",
+                  MAX(CASE WHEN location_id = '15821' THEN reading_value END) as "15821",
+                  MAX(CASE WHEN location_id = '15999' THEN reading_value END) as "15999",
+                  MAX(CASE WHEN location_id = '16026' THEN reading_value END) as "16026",
+                  MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
+                  MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
+                FROM public.meter_readings
+                GROUP BY DATE(reading_datetime), DATE_TRUNC('minute', reading_datetime);
 
-            REFRESH MATERIALIZED VIEW public.wide_view_mv;
-            ```
+                CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
 
-            2. **Set environment variables** or Streamlit secrets:
-               - `SUPABASE_URL`: Your Supabase project URL
-               - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
-               - `APP_USERNAME`: Login username (default: admin)
-               - `APP_PASSWORD`: Login password (default: changeme)
+                REFRESH MATERIALIZED VIEW public.wide_view_mv;
+                ```
 
-            3. **Refresh** this page after configuration
-            """)
+                2. **Set environment variables** or Streamlit secrets:
+                   - `SUPABASE_URL`: Your Supabase project URL
+                   - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
+                   - `APP_USERNAME`: Login username (default: admin)
+                   - `APP_PASSWORD`: Login password (default: changeme)
 
-        st.error(f"**Technical Error:** {str(e)}")
+                3. **Refresh** this page after configuration
+                """)
 
+            st.error(f"**Technical Error:** {str(e)}")
     with tab_yearly:
             try:
                 show_yearly_analysis_tab(get_client(), DEFAULT_VIEW)
@@ -881,4 +882,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
