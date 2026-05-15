@@ -53,7 +53,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           SUPABASE_WIDE_VIEW:   ${{ vars.SUPABASE_WIDE_VIEW || 'wide_view_mv' }}
         run: |
-          python etl/compute_monthly_summary.py
+          python compute_monthly_summary.py
  
       - name: Report result
         if: always()
