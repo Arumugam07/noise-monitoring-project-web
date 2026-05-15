@@ -26,9 +26,6 @@ import streamlit as st
 
 READINGS_PER_DAY = 1440
 
-MONTH_ORDER = ["Jan", "Feb", "Mar", "Apr", "May", "Jun",
-               "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
-
 
 # ── Data helpers ─────────────────────────────────────────────────────────────
 
@@ -95,15 +92,15 @@ def _detect_incidents(df: pd.DataFrame, location_id: str,
     return incidents
 
 
-def _load_precomputed(client, location_ids: list[str], year: int,
+def _load_precomputed(client, location_ids: list[str], start_month: date, end_month: date,
                        preset_overrides: dict) -> pd.DataFrame:
     """
     Pull already-computed monthly summaries from Supabase.
     Matches on location_id + month + exact min_db/max_db/duration_minutes
     so changing presets forces a fresh compute.
     """
-    start = str(date(year, 1, 1))
-    end   = str(date(year, 12, 31))
+    start = str(start_month)
+    end   = str(end_month)
     all_records = []
 
     for loc_id in location_ids:
@@ -132,18 +129,18 @@ def _load_precomputed(client, location_ids: list[str], year: int,
     return df
 
 
-def _months_to_process(year: int) -> list[tuple[int, int]]:
-    """Return list of (year, month) tuples from Jan of `year` up to today."""
-    today = date.today()
-    result = []
-    for m in range(1, 13):
-        if year < today.year or (year == today.year and m <= today.month):
-            result.append((year, m))
-    return result
+def _months_to_process() -> list[tuple[int, int]]:
+    """Return rolling 12-month window ending at current month."""
+    today_month = date.today().replace(day=1)
+    months = []
+    for i in range(11, -1, -1):
+        m = pd.Timestamp(today_month) - pd.DateOffset(months=i)
+        months.append((m.year, m.month))
+    return months
 
 
 def _compute_fresh(client, view_name: str, selected_locs: list[str],
-                    year: int, preset_overrides: dict) -> pd.DataFrame:
+                    preset_overrides: dict) -> pd.DataFrame:
     """
     Fetch raw data month by month and compute incidents.
     Saves nothing to Supabase (anon key is read-only).
@@ -151,7 +148,7 @@ def _compute_fresh(client, view_name: str, selected_locs: list[str],
     """
     from location_presets import LOCATION_PRESETS
 
-    months = _months_to_process(year)
+    months = _months_to_process()
     total_steps = len(selected_locs) * len(months)
     step = 0
 
@@ -183,7 +180,7 @@ def _compute_fresh(client, view_name: str, selected_locs: list[str],
                 "location_id":             loc_id,
                 "location":                loc_name,
                 "month":                   date(yr, mo, 1),
-                "month_label":             date(yr, mo, 1).strftime("%b"),
+                "month_label":             date(yr, mo, 1).strftime("%b %Y"),
                 "incident_count":          len(incidents),
                 "total_duration_minutes":  sum(i["duration"] for i in incidents),
                 "avg_peak_db":             round(
@@ -220,11 +217,13 @@ def _render_single_location(loc_id: str, df: pd.DataFrame) -> None:
         return
 
     # Ensure month_label column
-    loc_df["month_label"] = pd.to_datetime(loc_df["month"]).dt.strftime("%b")
+    loc_df["month_label"] = pd.to_datetime(loc_df["month"]).dt.strftime("%b %Y")
+    month_window = [date(y, m, 1) for y, m in _months_to_process()]
     loc_df = (
-        loc_df.set_index("month_label")
-        .reindex(MONTH_ORDER)
+        loc_df.set_index("month")
+        .reindex(month_window)
         .reset_index()
+        .rename(columns={"index": "month"})
         .fillna(0)
     )
 
@@ -303,7 +302,7 @@ def _render_multi_location(selected_locs: list[str], df: pd.DataFrame) -> None:
 
     # ── Monthly heatmap: rows = months, cols = locations ────────────────────
     st.markdown("**Monthly Incident Heatmap (rows = month, cols = location)**")
-    df["month_label"] = pd.to_datetime(df["month"]).dt.strftime("%b")
+    df["month_label"] = pd.to_datetime(df["month"]).dt.strftime("%b %Y")
 
     heatmap = df.pivot_table(
         index="month_label",
@@ -312,7 +311,8 @@ def _render_multi_location(selected_locs: list[str], df: pd.DataFrame) -> None:
         aggfunc="sum",
         fill_value=0,
     )
-    heatmap = heatmap.reindex([m for m in MONTH_ORDER if m in heatmap.index])
+    month_order = [date(y, m, 1).strftime("%b %Y") for y, m in _months_to_process()]
+    heatmap = heatmap.reindex([m for m in month_order if m in heatmap.index])
     st.dataframe(heatmap, use_container_width=True)
 
     # ── Summary table ────────────────────────────────────────────────────────
@@ -337,9 +337,9 @@ def _render_multi_location(selected_locs: list[str], df: pd.DataFrame) -> None:
 
 def _render_results(summary_df: pd.DataFrame,
                      selected_locs: list[str],
-                     year: int) -> None:
+                     range_label: str) -> None:
     st.markdown("---")
-    st.markdown(f"### 📊 Results — {year}")
+    st.markdown(f"### 📊 Results — {range_label}")
 
     if len(selected_locs) == 1:
         _render_single_location(selected_locs[0], summary_df)
@@ -355,7 +355,7 @@ def _render_results(summary_df: pd.DataFrame,
     st.download_button(
         label="📄 Download Summary CSV",
         data=csv,
-        file_name=f"yearly_noise_summary_{year}.csv",
+        file_name=f"yearly_noise_summary_{range_label.replace(' ', '_')}.csv",
         mime="text/csv",
         use_container_width=True,
     )
@@ -376,10 +376,8 @@ def show_yearly_analysis_tab(supabase_client, view_name: str) -> None:
         "across an entire year, loaded month-by-month to avoid Supabase timeouts."
     )
 
-    # ── Location + Year selectors ─────────────────────────────────────────────
-    col_loc, col_year = st.columns([3, 1])
-
-    with col_loc:
+    # ── Location selector ─────────────────────────────────────────────────────
+    with st.container():
         all_loc_ids = list(LOCATION_PRESETS.keys())
         selected_locs = st.multiselect(
             "📍 Locations",
@@ -390,15 +388,12 @@ def show_yearly_analysis_tab(supabase_client, view_name: str) -> None:
             key="yearly_location_picker",
         )
 
-    with col_year:
-        today = date.today()
-        year_options = list(range(2025, today.year + 1))
-        year = st.selectbox(
-            "📆 Year",
-            options=year_options,
-            index=len(year_options) - 1,
-            key="yearly_year_picker",
-        )
+    today_month = date.today().replace(day=1)
+    start_month = (pd.Timestamp(today_month) - pd.DateOffset(months=11)).date()
+    range_label = f"{start_month.strftime('%b %Y')} → {today_month.strftime('%b %Y')}"
+    st.info(f"Showing rolling 12-month window: **{range_label}**")
+
+    
 
     if not selected_locs:
         st.warning("Please select at least one location to continue.")
@@ -467,13 +462,13 @@ def show_yearly_analysis_tab(supabase_client, view_name: str) -> None:
     compute_btn = col_slow.button("🔄 Compute Now (Slow)",      use_container_width=True)
 
     # Cache key: invalidate when user changes selections
-    cache_key = f"{sorted(selected_locs)}_{year}_{str(preset_overrides)}"
+    cache_key = f"{sorted(selected_locs)}_{start_month}_{today_month}_{str(preset_overrides)}"
 
     # ── Load pre-computed ─────────────────────────────────────────────────────
     if load_btn:
         with st.spinner("Loading pre-computed monthly summaries from Supabase…"):
             summary_df = _load_precomputed(
-                supabase_client, selected_locs, year, preset_overrides
+                supabase_client, selected_locs, start_month, today_month, preset_overrides
             )
 
         if summary_df.empty:
@@ -486,18 +481,18 @@ def show_yearly_analysis_tab(supabase_client, view_name: str) -> None:
             st.session_state["yr_summary_df"]  = summary_df
             st.session_state["yr_cache_key"]   = cache_key
             st.session_state["yr_locs"]        = selected_locs
-            st.session_state["yr_year"]        = year
+            st.session_state["yr_range_label"] = range_label
 
     # ── Compute fresh ─────────────────────────────────────────────────────────
     if compute_btn:
         summary_df = _compute_fresh(
-            supabase_client, view_name, selected_locs, year, preset_overrides
+            supabase_client, view_name, selected_locs, preset_overrides
         )
         if not summary_df.empty:
             st.session_state["yr_summary_df"] = summary_df
             st.session_state["yr_cache_key"]  = cache_key
             st.session_state["yr_locs"]       = selected_locs
-            st.session_state["yr_year"]       = year
+            st.session_state["yr_range_label"] = range_label
 
     # ── Render cached results (survive Streamlit reruns) ─────────────────────
     if (
@@ -507,5 +502,5 @@ def show_yearly_analysis_tab(supabase_client, view_name: str) -> None:
         _render_results(
             st.session_state["yr_summary_df"],
             st.session_state["yr_locs"],
-            st.session_state["yr_year"],
+            st.session_state["yr_range_label"],
         )
