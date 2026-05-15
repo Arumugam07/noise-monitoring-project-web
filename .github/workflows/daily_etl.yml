@@ -23,7 +23,7 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SUPABASE_TABLE: meter_readings
-        run: python supabase_daily.py,
+        run: python supabase_daily.py
 
       - name: Run Today's ETL (catch late data)
         env:
