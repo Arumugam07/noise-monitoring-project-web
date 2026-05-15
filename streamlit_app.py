@@ -16,6 +16,8 @@ import pandas as pd
 import streamlit as st
 from supabase import create_client
 from dotenv import load_dotenv
+from yearly_analysis_tab import show_yearly_analysis_tab
+from location_presets import LOCATION_PRESETS
 
 # Map location IDs → friendly names for column display
 LOCATION_ID_TO_NAME = {
@@ -507,6 +509,8 @@ def main():
     st.markdown('<div class="main-header">🔊 Noise Monitoring System</div>', unsafe_allow_html=True)
     st.markdown('<div class="sub-header">Real-time noise level monitoring across multiple locations in Singapore</div>', unsafe_allow_html=True)
 
+    tab_dashboard, tab_yearly = st.tabs(["📊 Dashboard", "📅 Yearly Analysis"])
+
     try:
         value_filter_active = (vmin is not None) or (vmax is not None)
 
@@ -867,6 +871,12 @@ def main():
             """)
 
         st.error(f"**Technical Error:** {str(e)}")
+
+    with tab_yearly:
+            try:
+                show_yearly_analysis_tab(get_client(), DEFAULT_VIEW)
+            except Exception as e:
+                st.error(f"⚠️ Yearly analysis error: {e}")
 
 
 if __name__ == "__main__":
