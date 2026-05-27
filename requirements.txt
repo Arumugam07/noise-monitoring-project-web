@@ -1,5 +1,6 @@
 streamlit
 pandas
+altair
 supabase
 python-dotenv
 openpyxl
