@@ -67,8 +67,8 @@ def _ensure_summary_metrics(df: pd.DataFrame) -> pd.DataFrame:
     ]
     for col in numeric_cols:
         if col not in df.columns:
-            df[col] = 0
-        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0)
+            df[col] = 0.0
+        df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype(float)
 
     needs_avg_duration = (df["avg_duration_per_incident"] <= 0) & (df["incident_count"] > 0)
     df.loc[needs_avg_duration, "avg_duration_per_incident"] = (
