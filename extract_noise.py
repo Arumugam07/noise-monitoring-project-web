@@ -145,3 +145,7 @@ def main():
         worksheet.set_column(1, 2, 12)
 
     print(f"Saved {OUTPUT_FILE}")
+
+
+if __name__ == "__main__":
+    main()
