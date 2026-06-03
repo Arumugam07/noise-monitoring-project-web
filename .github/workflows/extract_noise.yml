@@ -1,70 +1,63 @@
-name: Extract Noise Data to Excel
+name: Extract Noise Data
 
 on:
   workflow_dispatch:
+    inputs:
+      year:
+        description: "Year to export"
+        required: true
+        default: "2025"
+      noise_table:
+        description: "Supabase table name"
+        required: false
+        default: "meter_readings"
+      time_col:
+        description: "Timestamp column"
+        required: false
+        default: "reading_datetime"
+      location_col:
+        description: "Location column"
+        required: false
+        default: "location_name"
+      decibel_col:
+        description: "Decibel column"
+        required: false
+        default: "reading_value"
 
 jobs:
-  extract:
+  extract-noise:
     runs-on: ubuntu-latest
 
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      YEAR: ${{ inputs.year }}
+      NOISE_TABLE: ${{ inputs.noise_table }}
+      TIME_COL: ${{ inputs.time_col }}
+      LOCATION_COL: ${{ inputs.location_col }}
+      DECIBEL_COL: ${{ inputs.decibel_col }}
+      OUTPUT_FILE: decibel_data_${{ inputs.year }}.xlsx
+
     steps:
-      - name: Checkout repo
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Setup Python
+      - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: pip install supabase pandas openpyxl python-dotenv
-
-      - name: Validate secrets
-        env:
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      - name: Install Python packages
         run: |
-          if [ -z "$SUPABASE_ANON_KEY" ]; then
-            echo "❌ Missing SUPABASE_ANON_KEY"
-            exit 1
-          fi
+          python -m pip install --upgrade pip
+          pip install supabase pandas openpyxl xlsxwriter
 
-          if [ -z "$SUPABASE_URL" ]; then
-            echo "❌ Missing SUPABASE_URL"
-            exit 1
-          fi
-
-          echo "✅ Secrets OK"
-
-      - name: Test Supabase connection
-        env:
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-        run: |
-          python - <<'PYEOF'
-          import os
-          from supabase import create_client
-
-          url = os.environ["SUPABASE_URL"]
-          key = os.environ["SUPABASE_ANON_KEY"]
-
-          print(f"Connecting to: {url}")
-          client = create_client(url, key)
-
-          resp = client.table("meter_readings").select("reading_datetime", count="exact").limit(1).execute()
-
-          print(f"✅ Connection successful. Total rows: {resp.count}")
-          PYEOF
-
-      - name: Run extraction
-        env:
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      - name: Run noise extraction
         run: python extract_noise.py
 
-      - name: Upload Excel
+      - name: Upload Excel file
         uses: actions/upload-artifact@v4
         with:
-          name: noise-readings-2025-2026
-          path: noise_2025_2026.xlsx
-          retention-days: 7
+          name: decibel-data-${{ inputs.year }}
+          path: decibel_data_${{ inputs.year }}.xlsx
+          if-no-files-found: error
