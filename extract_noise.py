@@ -1,12 +1,10 @@
 #!/usr/bin/env python3
 """
 Extract noise readings from Supabase: 2 Jun 2025 → 2 Jun 2026
-Queries meter_readings table directly (no row limit from views)
-Pivots to: Date | Time | Location1 | Location2 ... 
+Queries meter_readings directly, pivots in Python, exports to Excel.
 """
 
 import os
-from datetime import date, timedelta
 import pandas as pd
 from supabase import create_client
 from dotenv import load_dotenv
@@ -20,8 +18,8 @@ load_dotenv()
 SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
 OUTPUT_FILE  = "noise_2025_2026.xlsx"
-START_DATE   = "2025-06-02"
-END_DATE     = "2026-06-02"
+START_DT     = "2025-06-02T00:00:00"
+END_DT       = "2026-06-02T23:59:59"
 BATCH_SIZE   = 10000
 
 LOCATION_NAMES = {
@@ -47,51 +45,71 @@ def fetch_all():
     all_rows = []
     offset = 0
 
-    print(f"Fetching raw readings from meter_readings: {START_DATE} → {END_DATE}")
-    print("This will take several minutes for a full year of data...")
+    print(f"Fetching from meter_readings: {START_DT} → {END_DT}")
 
     while True:
         resp = (
             client.table("meter_readings")
             .select("reading_datetime,location_id,reading_value")
-            .gte("reading_datetime", f"{START_DATE}T00:00:00+00:00")
-            .lte("reading_datetime", f"{END_DATE}T23:59:59+00:00")
+            .gte("reading_datetime", START_DT)
+            .lte("reading_datetime", END_DT)
             .in_("location_id", LOCATION_IDS)
-            .order("reading_datetime")
+            .order("reading_datetime", desc=False)
             .range(offset, offset + BATCH_SIZE - 1)
             .execute()
         )
+
         batch = resp.data or []
         if not batch:
+            print(f"\nNo more data at offset {offset}")
             break
 
         all_rows.extend(batch)
-        print(f"  {len(all_rows):,} rows fetched...", end="\r")
+        print(f"  {len(all_rows):,} rows...", end="\r")
 
         if len(batch) < BATCH_SIZE:
             break
         offset += BATCH_SIZE
 
-    print(f"\nTotal raw rows fetched: {len(all_rows):,}")
+    print(f"\nTotal rows: {len(all_rows):,}")
+
+    # Debug: show first row to confirm column names
+    if all_rows:
+        print(f"Sample row keys: {list(all_rows[0].keys())}")
+        print(f"Sample row: {all_rows[0]}")
+
     return all_rows
 
 
 def build_pivot(rows):
-    print("Building pivot table...")
+    if not rows:
+        raise ValueError("No data returned. Check date range and Supabase credentials.")
+
+    print("Building pivot...")
     df = pd.DataFrame(rows)
+    print(f"Columns in dataframe: {list(df.columns)}")
 
-    # Convert datetime to Singapore time
-    df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], utc=True)
-    df["reading_datetime"] = df["reading_datetime"].dt.tz_convert("Asia/Singapore")
+    # Find the datetime column (handle any naming)
+    dt_col = None
+    for col in df.columns:
+        if "datetime" in col.lower() or "time" in col.lower():
+            dt_col = col
+            break
+    if dt_col is None:
+        raise ValueError(f"No datetime column found. Columns: {list(df.columns)}")
 
-    # Extract date and minute-level timestamp
-    df["Date"]   = df["reading_datetime"].dt.strftime("%-d %b %y")
-    df["Time"]   = df["reading_datetime"].dt.strftime("%H:%M")
-    df["dt_key"] = df["reading_datetime"].dt.floor("min")
+    print(f"Using datetime column: '{dt_col}'")
+
+    # Convert to Singapore time
+    df[dt_col] = pd.to_datetime(df[dt_col], utc=True)
+    df[dt_col] = df[dt_col].dt.tz_convert("Asia/Singapore")
+
+    df["Date"]   = df[dt_col].dt.strftime("%-d %b %y")
+    df["Time"]   = df[dt_col].dt.strftime("%H:%M")
+    df["dt_key"] = df[dt_col].dt.floor("min")
 
     df["reading_value"] = pd.to_numeric(df["reading_value"], errors="coerce")
 
-    # Pivot: rows = (Date, Time, dt_key), columns = location_id
     pivot = df.pivot_table(
         index=["dt_key", "Date", "Time"],
         columns="location_id",
@@ -100,16 +118,15 @@ def build_pivot(rows):
     ).reset_index()
 
     pivot = pivot.sort_values("dt_key").drop(columns=["dt_key"])
+    pivot.columns.name = None
 
-    # Rename location IDs → friendly names, keep only known locations
     rename = {lid: LOCATION_NAMES[lid] for lid in LOCATION_IDS if lid in pivot.columns}
     pivot = pivot.rename(columns=rename)
 
-    # Final column order
     loc_cols = [LOCATION_NAMES[lid] for lid in LOCATION_IDS if LOCATION_NAMES[lid] in pivot.columns]
     pivot = pivot[["Date", "Time"] + loc_cols]
 
-    print(f"Pivot complete: {len(pivot):,} rows × {len(pivot.columns)} columns")
+    print(f"Pivot: {len(pivot):,} rows × {len(pivot.columns)} columns")
     return pivot
 
 
@@ -122,7 +139,7 @@ def db_color(val):
 
 
 def write_excel(df):
-    print(f"Writing Excel file: {OUTPUT_FILE}")
+    print(f"Writing {OUTPUT_FILE}...")
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("Noise Readings")
 
@@ -135,13 +152,12 @@ def write_excel(df):
     center    = Alignment(horizontal="center", vertical="center")
     left      = Alignment(horizontal="left",   vertical="center")
 
-    # Column widths
     ws.column_dimensions["A"].width = 11
     ws.column_dimensions["B"].width = 7
     for ci in range(3, len(df.columns) + 1):
         ws.column_dimensions[get_column_letter(ci)].width = 24
 
-    # Header
+    # Header row
     hdr_cells = []
     for h in df.columns:
         c = WriteOnlyCell(ws, value=h)
@@ -150,7 +166,7 @@ def write_excel(df):
         hdr_cells.append(c)
     ws.append(hdr_cells)
 
-    # Data
+    # Data rows
     for i, row in enumerate(df.itertuples(index=False), 1):
         cells = []
         for ci, val in enumerate(row):
@@ -169,12 +185,11 @@ def write_excel(df):
             cells.append(c)
         ws.append(cells)
 
-        if i % 50000 == 0:
+        if i % 100000 == 0:
             print(f"  Written {i:,} rows...")
 
     wb.save(OUTPUT_FILE)
-    print(f"\n✅ Done! Saved: {OUTPUT_FILE}")
-    print(f"   {len(df):,} rows × {len(df.columns)} columns")
+    print(f"\n✅ Saved: {OUTPUT_FILE}  ({len(df):,} rows)")
 
 
 if __name__ == "__main__":
