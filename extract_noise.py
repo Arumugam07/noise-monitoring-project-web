@@ -4,14 +4,14 @@ import requests
 import pandas as pd
 
 
-SUPABASE_URL = "https://tgznxzfdlxhxqwpohhyl.supabase.co"
+SUPABASE_URL = os.environ.get(
+    "SUPABASE_URL",
+    "https://tgznxzfdlxhxqwpohhyl.supabase.co",
+)
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
+VIEW_NAME = "noise_excel_export_2025_2026"
 OUTPUT_FILE = "noise_2_jun_2025_to_2_jun_2026.xlsx"
-
-TABLE = "meter_readings"
-START_DATE = "2025-06-02T00:00:00+08:00"
-END_DATE = "2026-06-03T00:00:00+08:00"
 
 PAGE_SIZE = 1000
 
@@ -29,18 +29,14 @@ def fetch_all_rows():
         print(f"Fetching rows {offset} to {offset + PAGE_SIZE - 1}...")
 
         params = {
-            "select": "reading_datetime,location_id,location_name,reading_value",
-            "reading_datetime": [
-                f"gte.{START_DATE}",
-                f"lt.{END_DATE}",
-            ],
-            "order": "reading_datetime.asc,location_name.asc",
+            "select": "*",
+            "order": "minute.asc",
             "limit": str(PAGE_SIZE),
             "offset": str(offset),
         }
 
         response = requests.get(
-            f"{SUPABASE_URL}/rest/v1/{TABLE}",
+            f"{SUPABASE_URL}/rest/v1/{VIEW_NAME}",
             headers=headers,
             params=params,
             timeout=120,
@@ -59,7 +55,7 @@ def fetch_all_rows():
             break
 
         offset += PAGE_SIZE
-        time.sleep(0.2)
+        time.sleep(0.1)
 
     return all_rows
 
@@ -68,51 +64,34 @@ def main():
     rows = fetch_all_rows()
 
     if not rows:
-        raise RuntimeError("No rows found for this date range.")
+        raise RuntimeError("No rows found.")
 
     df = pd.DataFrame(rows)
 
-    df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], errors="coerce")
-    df["reading_value"] = pd.to_numeric(df["reading_value"], errors="coerce")
-    df = df.dropna(subset=["reading_datetime", "location_name", "reading_value"])
+    df["minute"] = pd.to_datetime(df["minute"], errors="coerce")
 
-    # Convert to Singapore time, then remove timezone because Excel cannot write timezone-aware datetimes.
-    df["reading_datetime"] = (
-        df["reading_datetime"]
-        .dt.tz_convert("Asia/Singapore")
-        .dt.tz_localize(None)
-    )
+    if df["minute"].dt.tz is not None:
+        df["minute"] = df["minute"].dt.tz_convert("Asia/Singapore").dt.tz_localize(None)
 
-    df["minute"] = df["reading_datetime"].dt.floor("min")
+    df = df.sort_values("minute")
 
-    pivot = (
-        df.pivot_table(
-            index="minute",
-            columns="location_name",
-            values="reading_value",
-            aggfunc="mean",
-        )
-        .sort_index()
-        .reset_index()
-    )
-
-    print(f"Writing Excel: {pivot.shape[0]} rows x {pivot.shape[1]} columns")
+    print(f"Writing Excel: {df.shape[0]} rows x {df.shape[1]} columns")
 
     with pd.ExcelWriter(
         OUTPUT_FILE,
         engine="xlsxwriter",
         datetime_format="d mmm yy hh:mm",
     ) as writer:
-        pivot.to_excel(writer, sheet_name="Noise Data", index=False)
+        df.to_excel(writer, sheet_name="Noise Data", index=False)
 
         workbook = writer.book
         worksheet = writer.sheets["Noise Data"]
 
         date_format = workbook.add_format({"num_format": "d mmm yy hh:mm"})
         worksheet.freeze_panes(1, 1)
-        worksheet.autofilter(0, 0, len(pivot), len(pivot.columns) - 1)
+        worksheet.autofilter(0, 0, len(df), len(df.columns) - 1)
         worksheet.set_column(0, 0, 18, date_format)
-        worksheet.set_column(1, len(pivot.columns) - 1, 14)
+        worksheet.set_column(1, len(df.columns) - 1, 16)
 
     print(f"Saved {OUTPUT_FILE}")
 
