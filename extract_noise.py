@@ -10,8 +10,8 @@ SUPABASE_URL = os.environ.get(
 )
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
-VIEW_NAME = "noise_excel_export_2025_2026"
-OUTPUT_FILE = "noise_2_jun_2025_to_2_jun_2026.xlsx"
+VIEW_NAME = "noise_excel_export_2025_2026_v2"
+OUTPUT_FILE = "noise_2_jun_2025_to_2_jun_2026_v2.xlsx"
 PAGE_SIZE = 1000
 
 
