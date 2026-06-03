@@ -13,7 +13,7 @@ TABLE = "meter_readings"
 START_DATE = "2025-06-02T00:00:00+08:00"
 END_DATE = "2026-06-03T00:00:00+08:00"
 
-PAGE_SIZE = 10000
+PAGE_SIZE = 1000
 
 
 def fetch_all_rows():
@@ -75,6 +75,13 @@ def main():
     df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], errors="coerce")
     df["reading_value"] = pd.to_numeric(df["reading_value"], errors="coerce")
     df = df.dropna(subset=["reading_datetime", "location_name", "reading_value"])
+
+    # Convert to Singapore time, then remove timezone because Excel cannot write timezone-aware datetimes.
+    df["reading_datetime"] = (
+        df["reading_datetime"]
+        .dt.tz_convert("Asia/Singapore")
+        .dt.tz_localize(None)
+    )
 
     df["minute"] = df["reading_datetime"].dt.floor("min")
 
