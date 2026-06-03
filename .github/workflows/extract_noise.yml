@@ -7,36 +7,14 @@ on:
         description: "Year to export"
         required: true
         default: "2025"
-      noise_table:
-        description: "Supabase table name"
-        required: false
-        default: "meter_readings"
-      time_col:
-        description: "Timestamp column"
-        required: false
-        default: "reading_datetime"
-      location_col:
-        description: "Location column"
-        required: false
-        default: "location_name"
-      decibel_col:
-        description: "Decibel column"
-        required: false
-        default: "reading_value"
 
 jobs:
   extract-noise:
     runs-on: ubuntu-latest
 
     env:
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      DATABASE_URL: ${{ secrets.DATABASE_URL }}
       YEAR: ${{ inputs.year }}
-      NOISE_TABLE: ${{ inputs.noise_table }}
-      TIME_COL: ${{ inputs.time_col }}
-      LOCATION_COL: ${{ inputs.location_col }}
-      DECIBEL_COL: ${{ inputs.decibel_col }}
-      OUTPUT_FILE: decibel_data_${{ inputs.year }}.xlsx
 
     steps:
       - name: Checkout repository
@@ -50,9 +28,9 @@ jobs:
       - name: Install Python packages
         run: |
           python -m pip install --upgrade pip
-          pip install supabase pandas openpyxl xlsxwriter
+          pip install pandas psycopg2-binary xlsxwriter openpyxl
 
-      - name: Run noise extraction
+      - name: Run export
         run: python extract_noise.py
 
       - name: Upload Excel file
