@@ -1,148 +1,89 @@
-#!/usr/bin/env python3
-"""
-Extract noise readings from Supabase: 2 Jun 2025 → 2 Jun 2026
-Queries meter_readings directly, pivots in Python, exports to Excel.
-"""
-
 import os
 import pandas as pd
 from supabase import create_client
-from dotenv import load_dotenv
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment, Border, Side
-from openpyxl.utils import get_column_letter
-from openpyxl.cell import WriteOnlyCell
+from datetime import datetime, timezone
 
-load_dotenv()
+SUPABASE_URL = os.environ["SUPABASE_URL"]
+SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
-# ✅ Load from environment (GitHub Actions will supply these)
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
+TABLE = "your_table_name"          # change this
+TIME_COL = "recorded_at"           # change this
+LOCATION_COL = "location"          # change this
+DECIBEL_COL = "decibel"            # change this
 
-OUTPUT_FILE  = "noise_2025_2026.xlsx"
-START_DT     = "2025-06-02T00:00:00"
-END_DT       = "2026-06-02T23:59:59"
-BATCH_SIZE   = 10000
+YEAR = 2025
+PAGE_SIZE = 1000
 
-# ✅ Safety check (prevents your previous error)
-if not SUPABASE_URL or "supabase.co" not in SUPABASE_URL:
-    raise ValueError("Invalid SUPABASE_URL. Must be your project URL (e.g. https://xxxx.supabase.co)")
+supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-if not SUPABASE_KEY:
-    raise ValueError("Missing SUPABASE_ANON_KEY")
-
-LOCATION_NAMES = {
-    "15490": "Singapore Sports School",
-    "16034": "BLK 120 Serangoon North Ave 1",
-    "16041": "BLK 838 Hougang Central",
-    "14542": "BLK 558 Jurong West Street 42",
-    "15725": "Jurong Safra Block C",
-    "16032": "AMA KENG SITE",
-    "16045": "BLK 19 Balam Road",
-    "15820": "Norcom II Tower 4",
-    "15821": "Blk 444 Choa Chu Kang Ave 4",
-    "15999": "BLK 654B Punggol Drive",
-    "16026": "BLK 132B Tengah Garden Avenue",
-    "16004": "BLK 206A Punggol Place",
-    "16005": "Woodlands 11",
-}
-LOCATION_IDS = list(LOCATION_NAMES.keys())
-
-
-def fetch_all():
-    client = create_client(SUPABASE_URL, SUPABASE_KEY)
-
-    all_rows = []
+def fetch_month(start, end):
+    rows = []
     offset = 0
 
-    print(f"Fetching data: {START_DT} → {END_DT}")
-
     while True:
-        resp = (
-            client.table("meter_readings")
-            .select("reading_datetime,location_id,reading_value")
-            .gte("reading_datetime", START_DT)
-            .lte("reading_datetime", END_DT)
-            .in_("location_id", LOCATION_IDS)
-            .order("reading_datetime", desc=False)
-            .range(offset, offset + BATCH_SIZE - 1)
+        result = (
+            supabase.table(TABLE)
+            .select(f"{LOCATION_COL},{TIME_COL},{DECIBEL_COL}")
+            .gte(TIME_COL, start)
+            .lt(TIME_COL, end)
+            .range(offset, offset + PAGE_SIZE - 1)
             .execute()
         )
 
-        batch = resp.data or []
-        if not batch:
-            print(f"No more data at offset {offset}")
+        batch = result.data or []
+        rows.extend(batch)
+
+        if len(batch) < PAGE_SIZE:
             break
 
-        all_rows.extend(batch)
-        print(f"Fetched {len(all_rows):,} rows", end="\r")
+        offset += PAGE_SIZE
 
-        if len(batch) < BATCH_SIZE:
-            break
+    return rows
 
-        offset += BATCH_SIZE
+output_file = f"decibel_data_{YEAR}.xlsx"
 
-    print(f"\nTotal rows fetched: {len(all_rows):,}")
-    return all_rows
+with pd.ExcelWriter(output_file, engine="xlsxwriter", datetime_format="d mmm yy hh:mm") as writer:
+    for month in range(1, 13):
+        start = datetime(YEAR, month, 1, tzinfo=timezone.utc)
 
+        if month == 12:
+            end = datetime(YEAR + 1, 1, 1, tzinfo=timezone.utc)
+        else:
+            end = datetime(YEAR, month + 1, 1, tzinfo=timezone.utc)
 
-def build_pivot(rows):
-    if not rows:
-        raise ValueError("No data returned.")
+        print(f"Fetching {start:%b %Y}...")
 
-    df = pd.DataFrame(rows)
+        rows = fetch_month(start.isoformat(), end.isoformat())
 
-    df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], utc=True)
-    df["reading_datetime"] = df["reading_datetime"].dt.tz_convert("Asia/Singapore")
+        if not rows:
+            continue
 
-    df["Date"] = df["reading_datetime"].dt.strftime("%d %b %y")
-    df["Time"] = df["reading_datetime"].dt.strftime("%H:%M")
-    df["dt_key"] = df["reading_datetime"].dt.floor("min")
+        df = pd.DataFrame(rows)
+        df[TIME_COL] = pd.to_datetime(df[TIME_COL])
 
-    df["reading_value"] = pd.to_numeric(df["reading_value"], errors="coerce")
+        # Round/floor to minute in case readings include seconds.
+        df["minute"] = df[TIME_COL].dt.floor("min")
 
-    pivot = df.pivot_table(
-        index=["dt_key", "Date", "Time"],
-        columns="location_id",
-        values="reading_value",
-        aggfunc="max"
-    ).reset_index()
+        # If multiple readings exist per minute/location, average them.
+        pivot = (
+            df.pivot_table(
+                index="minute",
+                columns=LOCATION_COL,
+                values=DECIBEL_COL,
+                aggfunc="mean",
+            )
+            .sort_index()
+            .reset_index()
+        )
 
-    pivot = pivot.sort_values("dt_key").drop(columns=["dt_key"])
-    pivot.columns.name = None
+        sheet_name = start.strftime("%b %Y")
+        pivot.to_excel(writer, sheet_name=sheet_name, index=False)
 
-    pivot = pivot.rename(columns={lid: LOCATION_NAMES[lid] for lid in LOCATION_IDS if lid in pivot.columns})
+        workbook = writer.book
+        worksheet = writer.sheets[sheet_name]
 
-    loc_cols = [LOCATION_NAMES[lid] for lid in LOCATION_IDS if LOCATION_NAMES[lid] in pivot.columns]
-    pivot = pivot[["Date", "Time"] + loc_cols]
+        date_format = workbook.add_format({"num_format": "d mmm yy hh:mm"})
+        worksheet.set_column(0, 0, 18, date_format)
+        worksheet.set_column(1, len(pivot.columns), 14)
 
-    print(f"Pivot built: {len(pivot):,} rows")
-    return pivot
-
-
-def write_excel(df):
-    print(f"Writing {OUTPUT_FILE}...")
-
-    wb = Workbook(write_only=True)
-    ws = wb.create_sheet("Noise Readings")
-
-    hdr_font = Font(bold=True, color="FFFFFF")
-    hdr_fill = PatternFill("solid", start_color="1F77B4")
-
-    for col in df.columns:
-        cell = WriteOnlyCell(ws, value=col)
-        cell.font = hdr_font
-        cell.fill = hdr_fill
-        ws.append([cell] if col == df.columns[0] else ws._cells[-1] + [cell])
-
-    for row in df.itertuples(index=False):
-        ws.append(list(row))
-
-    wb.save(OUTPUT_FILE)
-    print("Excel export done.")
-
-
-if __name__ == "__main__":
-    data = fetch_all()
-    df = build_pivot(data)
-    write_excel(df)
+print(f"Saved {output_file}")
