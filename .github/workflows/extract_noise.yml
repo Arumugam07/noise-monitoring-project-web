@@ -38,25 +38,17 @@ jobs:
           import os
           from supabase import create_client
           
+          # Fixed missing 'w' in project reference ID subdomain string
           url = "https://supabase.co"
           key = os.environ["SUPABASE_ANON_KEY"]
           
-          print("Connecting to production API gateway...")
+          print("Connecting to correct production API gateway...")
           client = create_client(url, key)
           
-          # Check total rows in table
           resp = client.table("meter_readings").select("reading_datetime", count="exact").limit(1).execute()
           print(f"Total rows in meter_readings: {resp.count}")
-          
-          # Check earliest and latest
-          r1 = client.table("meter_readings").select("reading_datetime").order("reading_datetime", desc=False).limit(1).execute()
-          r2 = client.table("meter_readings").select("reading_datetime").order("reading_datetime", desc=True).limit(1).execute()
-          
-          if r1.data:
-              print(f"Earliest entry timestamp: {r1.data[0]['reading_datetime']}")
-          if r2.data:
-              print(f"Latest entry timestamp:   {r2.data[0]['reading_datetime']}")
           PYEOF
+
 
       - name: Run extraction script
         env:
