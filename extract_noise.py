@@ -15,13 +15,21 @@ from openpyxl.cell import WriteOnlyCell
 
 load_dotenv()
 
-# Explicit production DB routing url
-SUPABASE_URL = "https://supabase.co"
+# ✅ Load from environment (GitHub Actions will supply these)
+SUPABASE_URL = os.getenv("SUPABASE_URL")
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
+
 OUTPUT_FILE  = "noise_2025_2026.xlsx"
 START_DT     = "2025-06-02T00:00:00"
 END_DT       = "2026-06-02T23:59:59"
 BATCH_SIZE   = 10000
+
+# ✅ Safety check (prevents your previous error)
+if not SUPABASE_URL or "supabase.co" not in SUPABASE_URL:
+    raise ValueError("Invalid SUPABASE_URL. Must be your project URL (e.g. https://xxxx.supabase.co)")
+
+if not SUPABASE_KEY:
+    raise ValueError("Missing SUPABASE_ANON_KEY")
 
 LOCATION_NAMES = {
     "15490": "Singapore Sports School",
@@ -43,10 +51,11 @@ LOCATION_IDS = list(LOCATION_NAMES.keys())
 
 def fetch_all():
     client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
     all_rows = []
     offset = 0
 
-    print(f"Fetching from meter_readings: {START_DT} → {END_DT}")
+    print(f"Fetching data: {START_DT} → {END_DT}")
 
     while True:
         resp = (
@@ -62,49 +71,33 @@ def fetch_all():
 
         batch = resp.data or []
         if not batch:
-            print(f"\nNo more data at offset {offset}")
+            print(f"No more data at offset {offset}")
             break
 
         all_rows.extend(batch)
-        print(f"  {len(all_rows):,} rows...", end="\r")
+        print(f"Fetched {len(all_rows):,} rows", end="\r")
 
         if len(batch) < BATCH_SIZE:
             break
+
         offset += BATCH_SIZE
 
-    print(f"\nTotal rows: {len(all_rows):,}")
-
-    if all_rows:
-        print(f"Sample row keys: {list(all_rows[0].keys())}")
-        print(f"Sample row: {all_rows[0]}")
-
+    print(f"\nTotal rows fetched: {len(all_rows):,}")
     return all_rows
 
 
 def build_pivot(rows):
     if not rows:
-        raise ValueError("No data returned. Check date range and Supabase credentials.")
+        raise ValueError("No data returned.")
 
-    print("Building pivot...")
     df = pd.DataFrame(rows)
-    print(f"Columns in dataframe: {list(df.columns)}")
 
-    dt_col = None
-    for col in df.columns:
-        if "datetime" in col.lower() or "time" in col.lower():
-            dt_col = col
-            break
-    if dt_col is None:
-        raise ValueError(f"No datetime column found. Columns: {list(df.columns)}")
+    df["reading_datetime"] = pd.to_datetime(df["reading_datetime"], utc=True)
+    df["reading_datetime"] = df["reading_datetime"].dt.tz_convert("Asia/Singapore")
 
-    print(f"Using datetime column: '{dt_col}'")
-
-    df[dt_col] = pd.to_datetime(df[dt_col], utc=True)
-    df[dt_col] = df[dt_col].dt.tz_convert("Asia/Singapore")
-
-    df["Date"]   = df[dt_col].dt.strftime("%d %b %y")
-    df["Time"]   = df[dt_col].dt.strftime("%H:%M")
-    df["dt_key"] = df[dt_col].dt.floor("min")
+    df["Date"] = df["reading_datetime"].dt.strftime("%d %b %y")
+    df["Time"] = df["reading_datetime"].dt.strftime("%H:%M")
+    df["dt_key"] = df["reading_datetime"].dt.floor("min")
 
     df["reading_value"] = pd.to_numeric(df["reading_value"], errors="coerce")
 
@@ -118,81 +111,38 @@ def build_pivot(rows):
     pivot = pivot.sort_values("dt_key").drop(columns=["dt_key"])
     pivot.columns.name = None
 
-    rename = {lid: LOCATION_NAMES[lid] for lid in LOCATION_IDS if lid in pivot.columns}
-    pivot = pivot.rename(columns=rename)
+    pivot = pivot.rename(columns={lid: LOCATION_NAMES[lid] for lid in LOCATION_IDS if lid in pivot.columns})
 
     loc_cols = [LOCATION_NAMES[lid] for lid in LOCATION_IDS if LOCATION_NAMES[lid] in pivot.columns]
     pivot = pivot[["Date", "Time"] + loc_cols]
 
-    print(f"Pivot: {len(pivot):,} rows × {len(pivot.columns)} columns")
+    print(f"Pivot built: {len(pivot):,} rows")
     return pivot
-
-
-def db_color(val):
-    if pd.isna(val): return None
-    if val < 50:     return "D4EDDA"
-    elif val < 70:   return "FFF3CD"
-    elif val < 85:   return "FFE5D0"
-    else:            return "F8D7DA"
 
 
 def write_excel(df):
     print(f"Writing {OUTPUT_FILE}...")
+
     wb = Workbook(write_only=True)
     ws = wb.create_sheet("Noise Readings")
 
-    hdr_font  = Font(name="Arial", bold=True, color="FFFFFF", size=10)
-    hdr_fill  = PatternFill("solid", start_color="1F77B4")
-    date_fill = PatternFill("solid", start_color="EBF3FB")
-    thin      = Side(style="thin", color="CCCCCC")
-    border    = Border(left=thin, right=thin, bottom=thin)
-    data_font = Font(name="Arial", size=9)
-    center    = Alignment(horizontal="center", vertical="center")
-    left      = Alignment(horizontal="left",   vertical="center")
+    hdr_font = Font(bold=True, color="FFFFFF")
+    hdr_fill = PatternFill("solid", start_color="1F77B4")
 
-    ws.column_dimensions["A"].width = 11
-    ws.column_dimensions["B"].width = 7
-    for ci in range(3, len(df.columns) + 1):
-        ws.column_dimensions[get_column_letter(ci)].width = 24
+    for col in df.columns:
+        cell = WriteOnlyCell(ws, value=col)
+        cell.font = hdr_font
+        cell.fill = hdr_fill
+        ws.append([cell] if col == df.columns[0] else ws._cells[-1] + [cell])
 
-    # Header row
-    hdr_cells = []
-    for h in df.columns:
-        c = WriteOnlyCell(ws, value=h)
-        c.font = hdr_font
-        c.fill = hdr_fill
-        c.alignment = center
-        c.border = border
-        hdr_cells.append(c)
-    ws.append(hdr_cells)
-
-    # Data rows processing
     for row in df.itertuples(index=False):
-        cells = []
-        for ci, val in enumerate(row):
-            v = None if (isinstance(val, float) and pd.isna(val)) else val
-            c = WriteOnlyCell(ws, value=v)
-            c.font = data_font
-            c.border = border
-            
-            if ci == 0:
-                c.alignment = center
-                c.fill = date_fill
-            elif ci == 1:
-                c.alignment = center
-            else:
-                c.alignment = left
-                color = db_color(v)
-                if color:
-                    c.fill = PatternFill("solid", start_color=color)
-            cells.append(c)
-        ws.append(cells)
+        ws.append(list(row))
 
     wb.save(OUTPUT_FILE)
-    print("Excel generation finished successfully!")
+    print("Excel export done.")
 
 
 if __name__ == "__main__":
-    raw_data = fetch_all()
-    pivoted_df = build_pivot(raw_data)
-    write_excel(pivoted_df)
+    data = fetch_all()
+    df = build_pivot(data)
+    write_excel(df)
