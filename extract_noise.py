@@ -4,7 +4,7 @@ import requests
 import pandas as pd
 
 
-SUPABASE_URL = "https://tgznxzfdlxhxqwppohhyl.supabase.co"
+SUPABASE_URL = "https://tgznxzfdlxhxqwpohhyl.supabase.co"
 SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
 OUTPUT_FILE = "noise_2_jun_2025_to_2_jun_2026.xlsx"
