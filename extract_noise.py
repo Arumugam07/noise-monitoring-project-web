@@ -12,7 +12,6 @@ SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
 VIEW_NAME = "noise_excel_export_2025_2026"
 OUTPUT_FILE = "noise_2_jun_2025_to_2_jun_2026.xlsx"
-
 PAGE_SIZE = 1000
 
 
@@ -28,17 +27,15 @@ def fetch_all_rows():
     while True:
         print(f"Fetching rows {offset} to {offset + PAGE_SIZE - 1}...")
 
-        params = {
-            "select": "*",
-            "order": "minute.asc",
-            "limit": str(PAGE_SIZE),
-            "offset": str(offset),
-        }
-
         response = requests.get(
             f"{SUPABASE_URL}/rest/v1/{VIEW_NAME}",
             headers=headers,
-            params=params,
+            params={
+                "select": "*",
+                "order": "minute.asc",
+                "limit": PAGE_SIZE,
+                "offset": offset,
+            },
             timeout=120,
         )
 
@@ -67,11 +64,14 @@ def main():
         raise RuntimeError("No rows found.")
 
     df = pd.DataFrame(rows)
-
     df["minute"] = pd.to_datetime(df["minute"], errors="coerce")
 
     if df["minute"].dt.tz is not None:
-        df["minute"] = df["minute"].dt.tz_convert("Asia/Singapore").dt.tz_localize(None)
+        df["minute"] = (
+            df["minute"]
+            .dt.tz_convert("Asia/Singapore")
+            .dt.tz_localize(None)
+        )
 
     df = df.sort_values("minute")
 
@@ -82,16 +82,18 @@ def main():
         engine="xlsxwriter",
         datetime_format="d mmm yy hh:mm",
     ) as writer:
-        df.to_excel(writer, sheet_name="Noise Data", index=False)
+        df.to_excel(writer, sheet_name="Noise Data", index=False, na_rep="")
 
         workbook = writer.book
         worksheet = writer.sheets["Noise Data"]
 
         date_format = workbook.add_format({"num_format": "d mmm yy hh:mm"})
+        number_format = workbook.add_format({"num_format": "0.00"})
+
         worksheet.freeze_panes(1, 1)
         worksheet.autofilter(0, 0, len(df), len(df.columns) - 1)
         worksheet.set_column(0, 0, 18, date_format)
-        worksheet.set_column(1, len(df.columns) - 1, 16)
+        worksheet.set_column(1, len(df.columns) - 1, 18, number_format)
 
     print(f"Saved {OUTPUT_FILE}")
 
