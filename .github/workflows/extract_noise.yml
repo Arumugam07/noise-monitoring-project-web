@@ -1,7 +1,7 @@
 name: Extract Noise Data to Excel
 
 on:
-  workflow_dispatch:  # Run manually from GitHub Actions tab
+  workflow_dispatch:
 
 jobs:
   extract:
@@ -18,6 +18,52 @@ jobs:
 
       - name: Install dependencies
         run: pip install supabase pandas openpyxl python-dotenv
+
+      - name: Check secrets are set
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          if [ -z "$SUPABASE_URL" ]; then
+            echo "❌ SUPABASE_URL secret is NOT set"
+            exit 1
+          else
+            echo "✅ SUPABASE_URL is set (starts with: ${SUPABASE_URL:0:20}...)"
+          fi
+          if [ -z "$SUPABASE_ANON_KEY" ]; then
+            echo "❌ SUPABASE_ANON_KEY secret is NOT set"
+            exit 1
+          else
+            echo "✅ SUPABASE_ANON_KEY is set"
+          fi
+
+      - name: Test Supabase connection + row count
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+        run: |
+          python - <<'PYEOF'
+          import os
+          from supabase import create_client
+
+          url = os.environ["SUPABASE_URL"]
+          key = os.environ["SUPABASE_ANON_KEY"]
+          print(f"Connecting to: {url[:40]}...")
+
+          client = create_client(url, key)
+
+          # Check total rows in table
+          resp = client.table("meter_readings").select("reading_datetime", count="exact").limit(1).execute()
+          print(f"Total rows in meter_readings: {resp.count}")
+
+          # Check earliest and latest
+          r1 = client.table("meter_readings").select("reading_datetime").order("reading_datetime", desc=False).limit(1).execute()
+          r2 = client.table("meter_readings").select("reading_datetime").order("reading_datetime", desc=True).limit(1).execute()
+          if r1.data:
+              print(f"Earliest: {r1.data[0]['reading_datetime']}")
+          if r2.data:
+              print(f"Latest:   {r2.data[0]['reading_datetime']}")
+          PYEOF
 
       - name: Run extraction script
         env:
