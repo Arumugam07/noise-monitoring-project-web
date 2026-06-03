@@ -551,30 +551,30 @@ def main():
 
     with tab_dashboard:
 
-        try:
-            value_filter_active = (vmin is not None) or (vmax is not None)
+    try:
+        value_filter_active = (vmin is not None) or (vmax is not None)
 
-            with st.spinner("Loading data..."):
-                if detect_persisted:
-                    df_all = fetch_all_data(start_date, end_date, columns=selected_ids)
-               else:
-                    df_all = fetch_all_data(start_date, end_date)
-                filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
-                detection_frame = filter_frame(df_all, start_date, end_date, selected_ids, None, None)
+        with st.spinner("Loading data..."):
+            if detect_persisted:
+                df_all = fetch_all_data(start_date, end_date, columns=selected_ids)
+            else:
+                df_all = fetch_all_data(start_date, end_date)
 
-            if not filtered.empty:
-                location_cols = [c for c in detection_frame.columns if c not in ("Date", "Time")]
-                incidents = []
+            filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
+            detection_frame = filter_frame(df_all, start_date, end_date, selected_ids, None, None)
 
-                if detect_persisted:
-                    incidents = render_persisted_noise_incidents(
-                        detection_frame,
-                        location_cols,
-                        persist_min_db,
-                        persist_max_db,
-                        persist_duration,
-                    )
+        if not filtered.empty:
+            location_cols = [c for c in detection_frame.columns if c not in ("Date", "Time")]
+            incidents = []
 
+            if detect_persisted:
+                incidents = render_persisted_noise_incidents(
+                    detection_frame,
+                    location_cols,
+                    persist_min_db,
+                    persist_max_db,
+                    persist_duration,
+                )
                 if value_filter_active:
                     # === FILTER RESULTS SECTION ===
                     st.markdown("### 🔍 Filter Results")
