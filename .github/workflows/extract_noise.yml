@@ -31,5 +31,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: noise-2-jun-2025-to-2-jun-2026
-          path: noise_2_jun_2025_to_2_jun_2026.xlsx
+          path: "**/noise_2_jun_2025_to_2_jun_2026_v2.xlsx"
           if-no-files-found: error
