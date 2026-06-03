@@ -160,39 +160,77 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
 
 def detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration_minutes):
     incidents = []
-    df_sorted = df.sort_values(['Date', 'Time']).reset_index(drop=True)
-    
-    # Build a single datetime column once
+    if df.empty or not location_cols:
+        return incidents
+
+    df_sorted = df.copy()
     df_sorted['_dt'] = pd.to_datetime(
-        df_sorted['Date'].astype(str) + ' ' + df_sorted['Time'].astype(str)
+        df_sorted['Date'].astype(str) + ' ' + df_sorted['Time'].astype(str),
+        errors='coerce'
     )
+    df_sorted = df_sorted.dropna(subset=['_dt']).sort_values('_dt').reset_index(drop=True)
 
     for loc in location_cols:
         if loc not in df_sorted.columns:
             continue
 
-        vals = df_sorted[loc]
-        in_range = vals.between(min_db, max_db, inclusive='both').fillna(False)
+        loc_df = df_sorted[['_dt', loc]].copy()
+        loc_df[loc] = pd.to_numeric(loc_df[loc], errors='coerce')
+        loc_df = loc_df[loc_df[loc].between(min_db, max_db, inclusive='both')]
 
-        # Label consecutive True runs with a group id
-        group = (in_range != in_range.shift()).cumsum()
-        group = group.where(in_range)          # NaN outside the range
+        if loc_df.empty:
+            continue
 
-        for gid, idx_group in df_sorted.groupby(group):
+        minute_gap = loc_df['_dt'].diff().dt.total_seconds().div(60)
+        run_id = minute_gap.ne(1).cumsum()
+
+        for _, idx_group in loc_df.groupby(run_id):
             if len(idx_group) < duration_minutes:
                 continue
-            incident_vals = idx_group[loc].dropna()
-            if incident_vals.empty:
-                continue
+
             incidents.append({
                 'location': loc,
                 'start_time': idx_group['_dt'].iloc[0],
                 'end_time':   idx_group['_dt'].iloc[-1],
                 'duration':   len(idx_group),
-                'peak_db':    incident_vals.max(),
-                'avg_db':     incident_vals.mean(),
+                'peak_db':    idx_group[loc].max(),
+                'avg_db':     idx_group[loc].mean(),
             })
 
+    return sorted(incidents, key=lambda inc: inc['start_time'], reverse=True)
+
+
+def render_persisted_noise_incidents(df, location_cols, min_db, max_db, duration_minutes):
+    st.markdown("---")
+    st.markdown(f"### 🔊 Persisted Noise Incidents ({min_db}-{max_db}dB, {duration_minutes}+ min)")
+
+    if min_db > max_db:
+        st.warning("Minimum dB must be less than or equal to maximum dB.")
+        return []
+
+    with st.spinner("Analyzing noise patterns..."):
+        incidents = detect_persisted_noise_incidents(df, location_cols, min_db, max_db, duration_minutes)
+
+    if incidents:
+        num_locations = len(set(inc['location'] for inc in incidents))
+        st.success(f"🔍 Found **{len(incidents)}** incidents across **{num_locations}** locations")
+
+        incidents_df = pd.DataFrame(incidents)
+        incidents_df['start_time_display'] = incidents_df['start_time'].dt.strftime('%b %d, %H:%M')
+        incidents_df['end_time_display'] = incidents_df['end_time'].dt.strftime('%b %d, %H:%M')
+        incidents_df['peak_db'] = incidents_df['peak_db'].round(1)
+        incidents_df['avg_db'] = incidents_df['avg_db'].round(1)
+
+        display_df = incidents_df[['location', 'start_time_display', 'end_time_display', 'duration', 'peak_db', 'avg_db']].copy()
+        display_df.columns = ['Location', 'Start Time', 'End Time', 'Duration (min)', 'Peak dB', 'Avg dB']
+        st.dataframe(display_df, use_container_width=True, hide_index=True)
+    else:
+        numeric_cols = [c for c in location_cols if c in df.columns]
+        max_seen = pd.to_numeric(df[numeric_cols].stack(), errors='coerce').max() if numeric_cols else pd.NA
+        max_text = f" Highest reading in this selection was {max_seen:.1f}dB." if pd.notna(max_seen) else ""
+        st.info(f"✓ No persisted noise incidents detected for {min_db}-{max_db}dB lasting {duration_minutes}+ minutes.{max_text}")
+
+    st.markdown("---")
     return incidents
 
 @st.cache_resource(ttl=300)
@@ -519,11 +557,24 @@ def main():
             with st.spinner("Loading data..."):
                 if detect_persisted:
                     df_all = fetch_all_data(start_date, end_date, columns=selected_ids)
-                else:
+               else:
                     df_all = fetch_all_data(start_date, end_date)
                 filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
+                detection_frame = filter_frame(df_all, start_date, end_date, selected_ids, None, None)
 
             if not filtered.empty:
+                location_cols = [c for c in detection_frame.columns if c not in ("Date", "Time")]
+                incidents = []
+
+                if detect_persisted:
+                    incidents = render_persisted_noise_incidents(
+                        detection_frame,
+                        location_cols,
+                        persist_min_db,
+                        persist_max_db,
+                        persist_duration,
+                    )
+
                 if value_filter_active:
                     # === FILTER RESULTS SECTION ===
                     st.markdown("### 🔍 Filter Results")
@@ -815,6 +866,16 @@ def main():
                         st.info("💡 Excel export temporarily unavailable. Please use CSV format.")
 
             else:
+                if detect_persisted and not detection_frame.empty:
+                    location_cols = [c for c in detection_frame.columns if c not in ("Date", "Time")]
+                    render_persisted_noise_incidents(
+                        detection_frame,
+                        location_cols,
+                        persist_min_db,
+                        persist_max_db,
+                        persist_duration,
+                    )
+
                 st.warning("⚠️ No data found matching your filters.")
                 st.info("""
                 ### 💡 Suggestions:
