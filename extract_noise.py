@@ -15,7 +15,8 @@ from openpyxl.cell import WriteOnlyCell
 
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
+# Explicit production DB routing url
+SUPABASE_URL = "https://supabase.co"
 SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
 OUTPUT_FILE  = "noise_2025_2026.xlsx"
 START_DT     = "2025-06-02T00:00:00"
@@ -73,7 +74,6 @@ def fetch_all():
 
     print(f"\nTotal rows: {len(all_rows):,}")
 
-    # Debug: show first row to confirm column names
     if all_rows:
         print(f"Sample row keys: {list(all_rows[0].keys())}")
         print(f"Sample row: {all_rows[0]}")
@@ -89,7 +89,6 @@ def build_pivot(rows):
     df = pd.DataFrame(rows)
     print(f"Columns in dataframe: {list(df.columns)}")
 
-    # Find the datetime column (handle any naming)
     dt_col = None
     for col in df.columns:
         if "datetime" in col.lower() or "time" in col.lower():
@@ -100,11 +99,10 @@ def build_pivot(rows):
 
     print(f"Using datetime column: '{dt_col}'")
 
-    # Convert to Singapore time
     df[dt_col] = pd.to_datetime(df[dt_col], utc=True)
     df[dt_col] = df[dt_col].dt.tz_convert("Asia/Singapore")
 
-    df["Date"]   = df[dt_col].dt.strftime("%-d %b %y")
+    df["Date"]   = df[dt_col].dt.strftime("%d %b %y")
     df["Time"]   = df[dt_col].dt.strftime("%H:%M")
     df["dt_key"] = df[dt_col].dt.floor("min")
 
@@ -161,38 +159,40 @@ def write_excel(df):
     hdr_cells = []
     for h in df.columns:
         c = WriteOnlyCell(ws, value=h)
-        c.font = hdr_font; c.fill = hdr_fill
-        c.alignment = center; c.border = border
+        c.font = hdr_font
+        c.fill = hdr_fill
+        c.alignment = center
+        c.border = border
         hdr_cells.append(c)
     ws.append(hdr_cells)
 
-    # Data rows
-    for i, row in enumerate(df.itertuples(index=False), 1):
+    # Data rows processing
+    for row in df.itertuples(index=False):
         cells = []
         for ci, val in enumerate(row):
             v = None if (isinstance(val, float) and pd.isna(val)) else val
             c = WriteOnlyCell(ws, value=v)
-            c.font = data_font; c.border = border
+            c.font = data_font
+            c.border = border
+            
             if ci == 0:
-                c.fill = date_fill; c.alignment = left
+                c.alignment = center
+                c.fill = date_fill
             elif ci == 1:
                 c.alignment = center
             else:
-                c.alignment = center
-                color = db_color(val)
+                c.alignment = left
+                color = db_color(v)
                 if color:
                     c.fill = PatternFill("solid", start_color=color)
             cells.append(c)
         ws.append(cells)
 
-        if i % 100000 == 0:
-            print(f"  Written {i:,} rows...")
-
     wb.save(OUTPUT_FILE)
-    print(f"\n✅ Saved: {OUTPUT_FILE}  ({len(df):,} rows)")
+    print("Excel generation finished successfully!")
 
 
 if __name__ == "__main__":
-    rows  = fetch_all()
-    pivot = build_pivot(rows)
-    write_excel(pivot)
+    raw_data = fetch_all()
+    pivoted_df = build_pivot(raw_data)
+    write_excel(pivoted_df)
