@@ -1,0 +1,58 @@
+name: Backfill Gap
+
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: 'Start date (YYYY-MM-DD). Leave blank to auto-detect from MV max date.'
+        required: false
+        default: ''
+      end_date:
+        description: 'End date (YYYY-MM-DD). Leave blank for yesterday.'
+        required: false
+        default: ''
+      check_only:
+        description: 'Check which dates are missing without fetching data (true/false)'
+        required: false
+        default: 'false'
+
+jobs:
+  backfill-gap:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run Gap Backfill
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SUPABASE_TABLE: meter_readings
+        run: |
+          ARGS=""
+          if [ -n "${{ github.event.inputs.start_date }}" ]; then
+            ARGS="$ARGS --start ${{ github.event.inputs.start_date }}"
+          fi
+          if [ -n "${{ github.event.inputs.end_date }}" ]; then
+            ARGS="$ARGS --end ${{ github.event.inputs.end_date }}"
+          fi
+          if [ "${{ github.event.inputs.check_only }}" = "true" ]; then
+            ARGS="$ARGS --check-only"
+          fi
+          python backfill_gap.py $ARGS
+
+      - name: Refresh Materialized View
+        if: ${{ github.event.inputs.check_only != 'true' }}
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python refresh_mv.py
