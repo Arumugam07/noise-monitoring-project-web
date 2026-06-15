@@ -50,9 +50,4 @@ jobs:
           fi
           python supabase_backfill_gap.py $ARGS
 
-      - name: Refresh Materialized View
-        if: ${{ github.event.inputs.check_only != 'true' }}
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: python refresh_mv.py
+     
