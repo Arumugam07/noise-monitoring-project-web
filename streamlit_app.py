@@ -164,7 +164,7 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
         else:
             status = 'OFFLINE'
 
-        health[loc] = {=
+        health[loc] = {
             'online_days': online_days,
             'total_days': total_days,
             'uptime_pct': uptime_pct,
