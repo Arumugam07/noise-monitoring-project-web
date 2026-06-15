@@ -97,7 +97,7 @@ def get_sensor_health_single_date(df, target_date, location_cols):
     expected = max(expected, 1)  # avoid division by zero
 
     if day_df.empty:
-        return {loc: {'reading_count': 0, 'completeness': 0.0, 'status': 'OFFLINE'}
+        return {loc: {'reading_count': 0, 'completeness': 0.0, 'status': 'OFFLINE', 'expected': expected}
                 for loc in location_cols}
 
     health = {}
@@ -115,7 +115,8 @@ def get_sensor_health_single_date(df, target_date, location_cols):
         health[loc] = {
             'reading_count': valid_count,
             'completeness': completeness,
-            'status': status
+            'status': status,
+            'expected': expected,
         }
 
     return health
@@ -161,7 +162,7 @@ def get_sensor_health_date_range(df, start_date, end_date, location_cols):
         else:
             status = 'OFFLINE'
 
-        health[loc] = {
+        health[loc] = {=
             'online_days': online_days,
             'total_days': total_days,
             'uptime_pct': uptime_pct,
@@ -650,7 +651,7 @@ def main():
 
                     if is_single_date:
                         st.markdown(f"### 📅 Sensor Status for {start_date.strftime('%B %d, %Y')}")
-                        st.caption(f"Total readings expected: {READINGS_PER_DAY:,} per sensor (one reading per minute)")
+                        st.caption(f"Total readings expected: up to {READINGS_PER_DAY:,} per sensor (adjusted for partial days)")
 
                         health = get_sensor_health_single_date(filtered, start_date, location_cols)
 
@@ -688,7 +689,7 @@ def main():
                                                     {icons[h['status']]} {h['status']}
                                                 </div>
                                                 <div style="font-size: 1.1rem; font-weight: 600; color: #333;">
-                                                    {h['reading_count']:,}/{READINGS_PER_DAY:,}
+                                                    {h['reading_count']:,}/{h['expected']:,}
                                                 </div>
                                                 <div style="font-size: 0.9rem; color: #666;">{h['completeness']:.1f}% complete</div>
                                                 <div style="font-size: 0.8rem; color: {color['text']};">{messages[h['status']]}</div>
