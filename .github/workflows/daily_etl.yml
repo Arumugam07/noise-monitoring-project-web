@@ -37,10 +37,4 @@ jobs:
           SUPABASE_TABLE: meter_readings
         run: python supabase_today.py
 
-      # ── Always refresh MV after ETL so dashboard stays current ──
-      - name: Refresh Materialized View
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-        run: |
-          python refresh_mv.py && echo "✅ MV refreshed" || echo "⚠️ MV refresh failed — check SUPABASE_SERVICE_KEY and that refresh_wide_view_mv() RPC exists"
+  
