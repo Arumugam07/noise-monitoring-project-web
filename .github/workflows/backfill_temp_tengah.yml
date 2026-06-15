@@ -23,5 +23,5 @@ jobs:
           SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SUPABASE_TABLE: meter_readings
-          BACKFILL_START_DATE: "2026-04-07"
+          BACKFILL_START_DATE: "2026-06-01"
         run: python supabase_backfill_all.py
