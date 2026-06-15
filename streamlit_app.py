@@ -76,12 +76,14 @@ def get_noise_category(value):
 
 def get_sensor_health_single_date(df, target_date, location_cols):
     from datetime import datetime, date
-    import pytz
+    try:
+        import zoneinfo
+    except ImportError:
+        from backports import zoneinfo
 
     day_df = df[df['Date'] == target_date]
 
-    # If checking today or yesterday (partial day), adjust expected readings
-    sgt = pytz.timezone("Asia/Singapore")
+    sgt = zoneinfo.ZoneInfo("Asia/Singapore")
     now_sgt = datetime.now(sgt)
     today_sgt = now_sgt.date()
 
