@@ -41,6 +41,30 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
+LOCATION_MAP["16026"] = "BLK 132B Tengah Garden Avenue"
+
+LEGACY_LOCATION_IDS = {
+    "16026": "16367",
+}
+
+
+def get_health_location_columns(df):
+    """Exclude legacy sensor columns when their replacement exists."""
+    location_cols = [
+        column
+        for column in df.columns
+        if column not in ("Date", "Time")
+    ]
+
+    return [
+        location_id
+        for location_id in location_cols
+        if not (
+            location_id in LEGACY_LOCATION_IDS
+            and LEGACY_LOCATION_IDS[location_id] in location_cols
+        )
+    ]
+
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
 
@@ -183,7 +207,7 @@ def analyse_sensors(df, start_date, end_date):
     critical, warning, healthy = [], [], []
     total_days     = (end_date - start_date).days + 1
     expected_total = READINGS_PER_DAY * total_days
-    location_cols  = [c for c in df.columns if c not in ("Date", "Time")]
+    location_cols  = get_health_location_columns(df)
 
     for loc_id in location_cols:
         loc_name       = LOCATION_MAP.get(loc_id, loc_id)
