@@ -41,29 +41,33 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
-LOCATION_MAP["16026"] = "BLK 132B Tengah Garden Avenue"
+LOCATION_MAP["16367"] = "BLK 132B Tengah Garden Avenue"
 
-LEGACY_LOCATION_IDS = {
-    "16026": "16367",
-}
+TENGAH_OLD_ID = "16026"
+TENGAH_NEW_ID = "16367"
 
 
-def get_health_location_columns(df):
-    """Exclude legacy sensor columns when their replacement exists."""
-    location_cols = [
-        column
-        for column in df.columns
-        if column not in ("Date", "Time")
-    ]
+def merge_replacement_sensor_history(df):
+    """Merge old and replacement Tengah readings into the active ID."""
+    df = df.copy()
 
-    return [
-        location_id
-        for location_id in location_cols
-        if not (
-            location_id in LEGACY_LOCATION_IDS
-            and LEGACY_LOCATION_IDS[location_id] in location_cols
+    if TENGAH_NEW_ID in df.columns and TENGAH_OLD_ID in df.columns:
+        # Prefer new sensor readings, then fill missing history from old sensor.
+        df[TENGAH_NEW_ID] = df[TENGAH_NEW_ID].combine_first(
+            df[TENGAH_OLD_ID]
         )
-    ]
+
+        # Prevent Telegram from checking the old sensor separately.
+        df = df.drop(columns=[TENGAH_OLD_ID])
+
+    elif TENGAH_OLD_ID in df.columns:
+        # Handle views containing only the old column.
+        df = df.rename(columns={
+            TENGAH_OLD_ID: TENGAH_NEW_ID
+        })
+
+    return df
+
 
 
 # ── Data fetching ─────────────────────────────────────────────────────────────
@@ -204,10 +208,16 @@ def _telegram(msg: str):
 # ── Sensor analysis ───────────────────────────────────────────────────────────
 
 def analyse_sensors(df, start_date, end_date):
+    df = merge_replacement_sensor_history(df)
+
     critical, warning, healthy = [], [], []
     total_days     = (end_date - start_date).days + 1
     expected_total = READINGS_PER_DAY * total_days
-    location_cols  = get_health_location_columns(df)
+    location_cols = [
+    column
+    for column in df.columns
+    if column not in ("Date", "Time")
+]
 
     for loc_id in location_cols:
         loc_name       = LOCATION_MAP.get(loc_id, loc_id)
@@ -344,38 +354,68 @@ def _day_counts(df, loc_id, start_date, end_date):
 
 
 def check_consecutive_critical(df, start_date, end_date):
-    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
+    df = merge_replacement_sensor_history(df)
+
+    location_cols = [
+        column
+        for column in df.columns
+        if column not in ("Date", "Time")
+    ]
+
     flagged = []
+
     for loc_id in location_cols:
         loc_name = LOCATION_MAP.get(loc_id, loc_id)
-        days     = _day_counts(df, loc_id, start_date, end_date)
-        streak   = max_streak = 0
-        for d in days:
-            if d["pct"] < CRITICAL_THRESHOLD * 100:
+        days = _day_counts(df, loc_id, start_date, end_date)
+        streak = max_streak = 0
+
+        for day in days:
+            if day["pct"] < CRITICAL_THRESHOLD * 100:
                 streak += 1
                 max_streak = max(max_streak, streak)
             else:
                 streak = 0
+
         if max_streak >= CONSECUTIVE_DAYS:
-            flagged.append({"name": loc_name, "days": days, "max_streak": max_streak})
+            flagged.append({
+                "name": loc_name,
+                "days": days,
+                "max_streak": max_streak,
+            })
+
     return flagged
 
 
 def check_zero_reading_emergency(df, start_date, end_date):
-    location_cols = [c for c in df.columns if c not in ("Date", "Time")]
+    df = merge_replacement_sensor_history(df)
+
+    location_cols = [
+        column
+        for column in df.columns
+        if column not in ("Date", "Time")
+    ]
+
     flagged = []
+
     for loc_id in location_cols:
         loc_name = LOCATION_MAP.get(loc_id, loc_id)
-        days     = _day_counts(df, loc_id, start_date, end_date)
-        streak   = max_streak = 0
-        for d in days:
-            if d["count"] == 0:
+        days = _day_counts(df, loc_id, start_date, end_date)
+        streak = max_streak = 0
+
+        for day in days:
+            if day["count"] == 0:
                 streak += 1
                 max_streak = max(max_streak, streak)
             else:
                 streak = 0
+
         if max_streak >= CONSECUTIVE_DAYS:
-            flagged.append({"name": loc_name, "days": days, "max_streak": max_streak})
+            flagged.append({
+                "name": loc_name,
+                "days": days,
+                "max_streak": max_streak,
+            })
+
     return flagged
 
 
