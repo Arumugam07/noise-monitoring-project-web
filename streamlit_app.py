@@ -75,8 +75,26 @@ def get_noise_category(value):
 
 
 def get_sensor_health_single_date(df, target_date, location_cols):
-    """Calculate sensor health for a single date (per-day accuracy)."""
+    from datetime import datetime, date
+    import pytz
+
     day_df = df[df['Date'] == target_date]
+
+    # If checking today or yesterday (partial day), adjust expected readings
+    sgt = pytz.timezone("Asia/Singapore")
+    now_sgt = datetime.now(sgt)
+    today_sgt = now_sgt.date()
+
+    if target_date >= today_sgt:
+        # Today: only count minutes elapsed so far
+        expected = now_sgt.hour * 60 + now_sgt.minute
+    elif target_date == today_sgt - timedelta(days=1) and now_sgt.hour < 2:
+        # Yesterday but it's still early — MV may not have full day yet
+        expected = READINGS_PER_DAY - (2 - now_sgt.hour) * 60
+    else:
+        expected = READINGS_PER_DAY
+
+    expected = max(expected, 1)  # avoid division by zero
 
     if day_df.empty:
         return {loc: {'reading_count': 0, 'completeness': 0.0, 'status': 'OFFLINE'}
@@ -85,7 +103,7 @@ def get_sensor_health_single_date(df, target_date, location_cols):
     health = {}
     for loc in location_cols:
         valid_count = day_df[loc].notna().sum() if loc in day_df.columns else 0
-        completeness = (valid_count / READINGS_PER_DAY * 100) if READINGS_PER_DAY > 0 else 0
+        completeness = (valid_count / expected * 100)
 
         if completeness >= DEGRADED_THRESHOLD * 100:
             status = 'ONLINE'
