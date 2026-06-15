@@ -10,7 +10,7 @@ Enhanced with:
 
 import os
 import io
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
@@ -74,54 +74,134 @@ def get_noise_category(value):
         return "Very Loud"
 
 
-def get_sensor_health_single_date(df, target_date, location_cols):
-    from datetime import datetime, date
+def get_sensor_health_date_range(df, start_date, end_date, location_cols):
+    """Calculate sensor health across a date range."""
+
+    dates_with_expected_data = [
+        single_date.date()
+        for single_date in pd.date_range(start_date, end_date, freq="D")
+        if expected_minutes_for_date(single_date.date()) > 0
+    ]
+
+    total_days = len(dates_with_expected_data)
+    expected_readings = expected_minutes_for_range(start_date, end_date)
+
+    health = {}
+
+    for location in location_cols:
+        online_days = 0
+        offline_dates = []
+        degraded_dates = []
+
+        for single_date in dates_with_expected_data:
+            day_df = df[df["Date"] == single_date]
+            expected_for_day = expected_minutes_for_date(single_date)
+
+            if day_df.empty or location not in day_df.columns:
+                offline_dates.append(single_date)
+                continue
+
+            valid_count = day_df[location].notna().sum()
+
+            completeness = min(
+                valid_count / expected_for_day * 100,
+                100.0,
+            )
+
+            if completeness >= DEGRADED_THRESHOLD * 100:
+                online_days += 1
+            elif completeness >= OFFLINE_THRESHOLD * 100:
+                degraded_dates.append(single_date)
+            else:
+                offline_dates.append(single_date)
+
+        total_readings = (
+            df[location].notna().sum()
+            if location in df.columns
+            else 0
+        )
+
+        uptime_pct = (
+            online_days / total_days * 100
+            if total_days > 0
+            else 0
+        )
+
+        completeness_pct = (
+            min(total_readings / expected_readings * 100, 100.0)
+            if expected_readings > 0
+            else 0
+        )
+
+        if completeness_pct >= ONLINE_OVERALL_THRESHOLD * 100:
+            status = "ONLINE"
+        elif completeness_pct >= DEGRADED_OVERALL_THRESHOLD * 100:
+            status = "DEGRADED"
+        else:
+            status = "OFFLINE"
+
+        health[location] = {
+            "online_days": online_days,
+            "total_days": total_days,
+            "uptime_pct": uptime_pct,
+            "completeness_pct": completeness_pct,
+            "total_readings": total_readings,
+            "expected_readings": expected_readings,
+            "status": status,
+            "offline_dates": offline_dates,
+            "degraded_dates": degraded_dates,
+        }
+
+    return health
+
+def expected_minutes_for_date(target_date, now_sgt=None):
+    """Return the minutes expected for a Singapore calendar date."""
     try:
         import zoneinfo
     except ImportError:
         from backports import zoneinfo
 
-    day_df = df[df['Date'] == target_date]
-
     sgt = zoneinfo.ZoneInfo("Asia/Singapore")
-    now_sgt = datetime.now(sgt)
-    today_sgt = now_sgt.date()
+    now_sgt = now_sgt or datetime.now(sgt)
 
-    if target_date >= today_sgt:
-        # Today: only count minutes elapsed so far
-        expected = now_sgt.hour * 60 + now_sgt.minute
-    elif target_date == today_sgt - timedelta(days=1) and now_sgt.hour < 2:
-        # Yesterday but it's still early — MV may not have full day yet
-        expected = READINGS_PER_DAY - (2 - now_sgt.hour) * 60
-    else:
-        expected = READINGS_PER_DAY
+    if target_date < now_sgt.date():
+        return READINGS_PER_DAY
 
-    expected = max(expected, 1)  # avoid division by zero
+    if target_date > now_sgt.date():
+        return 0
 
-    if day_df.empty:
-        return {loc: {'reading_count': 0, 'completeness': 0.0, 'status': 'OFFLINE', 'expected': expected}
-                for loc in location_cols}
+    # Include the current minute.
+    return min(
+        now_sgt.hour * 60 + now_sgt.minute + 1,
+        READINGS_PER_DAY,
+    )
 
-    health = {}
-    for loc in location_cols:
-        valid_count = day_df[loc].notna().sum() if loc in day_df.columns else 0
-        completeness = (valid_count / expected * 100)
 
-        if completeness >= DEGRADED_THRESHOLD * 100:
-            status = 'ONLINE'
-        elif completeness >= OFFLINE_THRESHOLD * 100:
-            status = 'DEGRADED'
-        else:
-            status = 'OFFLINE'
+def expected_minutes_for_range(start_date, end_date, now_sgt=None):
+    """Return expected timestamps across a date range."""
+    return sum(
+        expected_minutes_for_date(single_date.date(), now_sgt)
+        for single_date in pd.date_range(start_date, end_date, freq="D")
+    )
 
-        health[loc] = {
-            'reading_count': valid_count,
-            'completeness': completeness,
-            'status': status,
-            'expected': expected,
-        }
 
-    return health
+def data_coverage_pct(df, expected_timestamps, location_cols):
+    """Calculate weighted data coverage across all selected sensors."""
+    expected_readings = expected_timestamps * len(location_cols)
+
+    actual_readings = sum(
+        df[location].notna().sum()
+        for location in location_cols
+        if location in df.columns
+    )
+
+    coverage = (
+        actual_readings / expected_readings * 100
+        if expected_readings
+        else 0.0
+    )
+
+    return min(coverage, 100.0), actual_readings, expected_readings
 
 
 def get_sensor_health_date_range(df, start_date, end_date, location_cols):
@@ -655,15 +735,18 @@ def main():
                         st.markdown(f"### 📅 Sensor Status for {start_date.strftime('%B %d, %Y')}")
                         st.caption(f"Total readings expected: up to {READINGS_PER_DAY:,} per sensor (adjusted for partial days)")
 
-                        health = get_sensor_health_single_date(filtered, start_date, location_cols)
+                        health = get_sensor_health_single_date(detection_frame, start_date, location_cols)
 
                         online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
                         degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
                         offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
-                        system_health = (online_count / len(health) * 100) if health else 0
+                        expected_timestamps = next(iter(health.values()))['expected'] if health else 0
+                        system_health, _, _ = data_coverage_pct(detection_frame, expected_timestamps, location_cols)
 
                         st.info(f"**System Health: {system_health:.0f}%** | ✅ {online_count} Online | ⚠️ {degraded_count} Degraded | ❌ {offline_count} Offline")
-
+                        if health and degraded_count + offline_count == len(health) and system_health < 95:
+                            st.warning("Most sensors share missing timestamps. Check the ETL and materialized-view timeline before treating this as a sensor outage.")
+                            
                         status_order = {'OFFLINE': 0, 'DEGRADED': 1, 'ONLINE': 2}
                         sorted_sensors = sorted(health.items(), key=lambda x: (status_order[x[1]['status']], x[0]))
 
@@ -700,14 +783,14 @@ def main():
 
                     else:
                         total_days = (end_date - start_date).days + 1
-                        expected_timestamps = READINGS_PER_DAY * total_days
-                        actual_timestamps = len(filtered)
+                        expected_timestamps = expected_minutes_for_range(start_date, end_date)
+                        actual_timestamps = len(detection_frame[['Date', 'Time']].drop_duplicates())
 
                         total_actual_readings = 0
                         total_expected_readings = expected_timestamps * len(location_cols)
                         for col in location_cols:
                             if col in filtered.columns:
-                                total_actual_readings += filtered[col].notna().sum()
+                                total_actual_readings += detection_frame[col].notna().sum()
 
                         if detect_persisted:
                             st.markdown("---")
@@ -742,12 +825,12 @@ def main():
                         )
                         st.caption("📊 Status based on data completeness: ✅ Online (≥70%) | ⚠️ Degraded (40-70%) | ❌ Offline (<40%)")
 
-                        health = get_sensor_health_date_range(filtered, start_date, end_date, location_cols)
+                        health = get_sensor_health_date_range(detection_frame, start_date, end_date, location_cols)
 
                         online_count = sum(1 for h in health.values() if h['status'] == 'ONLINE')
                         degraded_count = sum(1 for h in health.values() if h['status'] == 'DEGRADED')
                         offline_count = sum(1 for h in health.values() if h['status'] == 'OFFLINE')
-                        system_health = (online_count / len(health) * 100) if health else 0
+                        system_health, _, _ = data_coverage_pct(detection_frame, expected_timestamps, location_cols)
 
                         st.info(f"**Overall System Health: {system_health:.0f}%** | ✅ {online_count} Operational | ⚠️ {degraded_count} Degraded | ❌ {offline_count} Critical")
 
