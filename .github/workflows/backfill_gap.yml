@@ -48,7 +48,7 @@ jobs:
           if [ "${{ github.event.inputs.check_only }}" = "true" ]; then
             ARGS="$ARGS --check-only"
           fi
-          python backfill_gap.py $ARGS
+          python supabase_backfill_gap.py $ARGS
 
       - name: Refresh Materialized View
         if: ${{ github.event.inputs.check_only != 'true' }}
