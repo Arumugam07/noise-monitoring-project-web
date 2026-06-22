@@ -43,6 +43,8 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 LOCATION_MAP.pop("16026", None)
 
+df["16367"] = df["16367"].replace(0, pd.NA)
+
 LOCATION_MAP["16367"] = "BLK 132B Tengah Garden Avenue"
 
 
