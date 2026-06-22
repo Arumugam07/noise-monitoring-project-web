@@ -41,30 +41,10 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
+LOCATION_MAP.pop("16026", None)
+
 LOCATION_MAP["16367"] = "BLK 132B Tengah Garden Avenue"
 
-
-
-def merge_replacement_sensor_history(df):
-    """Merge old and replacement Tengah readings into the active ID."""
-    df = df.copy()
-
-    if TENGAH_NEW_ID in df.columns and TENGAH_OLD_ID in df.columns:
-        # Prefer new sensor readings, then fill missing history from old sensor.
-        df[TENGAH_NEW_ID] = df[TENGAH_NEW_ID].combine_first(
-            df[TENGAH_OLD_ID]
-        )
-
-        # Prevent Telegram from checking the old sensor separately.
-        df = df.drop(columns=[TENGAH_OLD_ID])
-
-    elif TENGAH_OLD_ID in df.columns:
-        # Handle views containing only the old column.
-        df = df.rename(columns={
-            TENGAH_OLD_ID: TENGAH_NEW_ID
-        })
-
-    return df
 
 
 
@@ -206,7 +186,7 @@ def _telegram(msg: str):
 # ── Sensor analysis ───────────────────────────────────────────────────────────
 
 def analyse_sensors(df, start_date, end_date):
-    df = merge_replacement_sensor_history(df)
+   
 
     critical, warning, healthy = [], [], []
     total_days     = (end_date - start_date).days + 1
@@ -352,8 +332,7 @@ def _day_counts(df, loc_id, start_date, end_date):
 
 
 def check_consecutive_critical(df, start_date, end_date):
-    df = merge_replacement_sensor_history(df)
-
+   
     location_cols = [
         column
         for column in df.columns
@@ -385,7 +364,7 @@ def check_consecutive_critical(df, start_date, end_date):
 
 
 def check_zero_reading_emergency(df, start_date, end_date):
-    df = merge_replacement_sensor_history(df)
+    
 
     location_cols = [
         column
