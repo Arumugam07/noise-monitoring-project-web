@@ -21,5 +21,5 @@ jobs:
           TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
         run: |
-          python monthly_health_check.py
-          python monthly_health_check.py --consecutive-check
+          python weekly_health_check.py
+          python weekly_health_check.py --consecutive-check
