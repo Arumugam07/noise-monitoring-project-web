@@ -43,7 +43,6 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 LOCATION_MAP.pop("16026", None)
 
-df["16367"] = df["16367"].replace(0, pd.NA)
 
 LOCATION_MAP["16367"] = "BLK 132B Tengah Garden Avenue"
 
@@ -472,6 +471,10 @@ def _validate_and_fetch(supabase, start_date, end_date):
 
     # Step 3: fetch date-filtered data
     df = fetch_date_range(supabase, start_date, end_date)
+
+    # ✅ Fix Tengah ghost zero readings
+    if not df.empty and "16367" in df.columns:
+        df["16367"] = df["16367"].replace(0, pd.NA)
 
     # Step 4: date-filtered result is empty → ETL gap
     if df.empty:
