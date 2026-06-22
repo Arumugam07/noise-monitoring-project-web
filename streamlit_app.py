@@ -31,7 +31,7 @@ LOCATION_ID_TO_NAME = {
     "15820": "Norcom II Tower 4",
     "15821": "Blk 444 Choa Chu Kang Avenue 4",
     "15999": "BLK 654B Punggol Drive",
-    "16026": "BLK 132B Tengah Garden Avenue",  # MV column — shows 16026 OR 16367 data
+    "16367": "BLK 132B Tengah Garden Avenue",
     "16004": "BLK 206A Punggol Place",
     "16005": "Woodlands 11",
 }
