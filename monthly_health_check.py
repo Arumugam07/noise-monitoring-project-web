@@ -43,8 +43,6 @@ LOCATION_MAP = {loc["ID"]: loc["Name"] for loc in LOCATIONS}
 
 LOCATION_MAP["16367"] = "BLK 132B Tengah Garden Avenue"
 
-TENGAH_OLD_ID = "16026"
-TENGAH_NEW_ID = "16367"
 
 
 def merge_replacement_sensor_history(df):
