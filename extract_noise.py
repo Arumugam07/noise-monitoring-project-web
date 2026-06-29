@@ -177,7 +177,14 @@ def write_excel(month_frames):
             ws.autofilter(0, 0, n_rows, n_cols - 1)
 
             for ci, cname in enumerate(df.columns):
-                max_len = df[cname].astype(str).head(500).str.len().max()
+                sample = df[cname].fillna("").astype(str).head(500)
+
+                max_len = sample.str.len().max()
+                if pd.isna(max_len):
+                    max_len = len(cname)
+                else:
+                    max_len = max(max_len, len(cname))
+                
                 ws.set_column(ci, ci, max(int(max_len) + 4, 14))
 
             print(f"  Wrote tab: {tab} ({n_rows:,} rows)")
