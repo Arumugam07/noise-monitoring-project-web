@@ -866,13 +866,17 @@ def main():
                     display_df["Time"] = display_df["Time"].astype(str)
 
                 numeric_cols = [c for c in display_df.columns if c not in ("Date", "Time")]
-                format_dict = {col: "{:.2f}" for col in numeric_cols if col in display_df.columns}
 
-                if format_dict:
-                    styled_df = display_df.style.format(format_dict, na_rep="")
-                    st.dataframe(styled_df, use_container_width=True, height=600, hide_index=True)
-                else:
-                    st.dataframe(display_df, use_container_width=True, height=600, hide_index=True)
+                for col in numeric_cols:
+                    if col in display_df.columns:
+                        display_df[col] = display_df[col].round(2)
+                
+                st.dataframe(
+                    display_df,
+                    use_container_width=True,
+                    height=600,
+                    hide_index=True,
+                )
 
                 # === EXPORT SECTION ===
                 st.markdown('<div class="section-divider"></div>', unsafe_allow_html=True)
