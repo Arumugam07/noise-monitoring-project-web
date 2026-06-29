@@ -8,6 +8,7 @@ import requests
 import logging
 
 log = logging.getLogger("telegram-alert")
+logging.basicConfig(level=logging.INFO)
 
 
 def send_telegram_message(message: str, token: str, chat_id: str):
