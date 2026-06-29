@@ -47,15 +47,19 @@ def send_telegram_photo(image_path: str, caption: str, token: str, chat_id: str)
 def send_telegram_document(file_path: str, caption: str, token: str, chat_id: str):
     """Send a document/file via Telegram."""
     url = f"https://api.telegram.org/bot{token}/sendDocument"
-    with open(file_path, "rb") as f:
-        resp = requests.post(
-            url,
-            data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
-            files={"document": f},
-            timeout=30
-        )
-    if resp.status_code == 200:
+
+    try:
+        with open(file_path, "rb") as f:
+            resp = requests.post(
+                url,
+                data={"chat_id": chat_id, "caption": caption, "parse_mode": "HTML"},
+                files={"document": f},
+                timeout=30
+            )
+        resp.raise_for_status()
         log.info("✅ Telegram document sent")
-    else:
-        log.error(f"❌ Failed to send document: {resp.text}")
+    except Exception as e:
+        log.error(f"❌ Failed to send document: {e}")
+        return None
+
     return resp
