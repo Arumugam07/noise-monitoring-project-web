@@ -2,13 +2,14 @@ name: Daily Noise Data ETL
 
 on:
   schedule:
-    - cron: '0 0 * * *'   # midnight UTC = 8:00 AM SGT
-  workflow_dispatch:
+    - cron: '0 0 * * *'   # 00:00 UTC = 08:00 SGT — runs after midnight SGT data is settled
+  workflow_dispatch:       # allow manual trigger from GitHub Actions UI
 
 jobs:
   daily-etl:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+
     steps:
       - uses: actions/checkout@v4
 
@@ -19,6 +20,7 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      # ── Step 1: Backfill yesterday (complete day, all 1440 readings) ──────────
       - name: Run Daily ETL (complete previous day)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -28,6 +30,7 @@ jobs:
           SUPABASE_TABLE: meter_readings
         run: python supabase_daily.py
 
+      # ── Step 2: Catch any late-arriving data for today ────────────────────────
       - name: Run Today's ETL (catch late data)
         env:
           SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
@@ -37,4 +40,12 @@ jobs:
           SUPABASE_TABLE: meter_readings
         run: python supabase_today.py
 
-  
+      # ── Step 3: Refresh MV so dashboard reflects the new rows immediately ─────
+      # pg_cron fires at :20 every hour, but this ensures the dashboard is
+      # current right after the daily ETL rather than waiting up to ~80 minutes.
+      - name: Refresh wide_view_mv
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+        run: python refresh_mv.py
