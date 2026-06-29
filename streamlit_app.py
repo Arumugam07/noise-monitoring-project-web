@@ -371,6 +371,21 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
 
+def generate_full_timeline(start_date, end_date):
+    """Generate full minute-level timeline for selected date range"""
+    full_range = pd.date_range(
+        start=f"{start_date} 00:00:00",
+        end=f"{end_date} 23:59:00",
+        freq="1min"
+    )
+
+    df_time = pd.DataFrame({
+        "Date": full_range.date,
+        "Time": full_range.time
+    })
+
+    return df_time
+
 
 def show_login_page():
     """Display the enhanced login page."""
@@ -599,6 +614,27 @@ def main():
     
                 filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
                 detection_frame = filter_frame(df_all, start_date, end_date, selected_ids, None, None)
+                
+                if start_date and end_date:
+                    full_timeline = generate_full_timeline(start_date, end_date)
+                
+                    # Merge for display (filtered data)
+                    filtered = full_timeline.merge(
+                        filtered,
+                        on=["Date", "Time"],
+                        how="left"
+                    )
+                
+                    # Merge for detection/health logic (IMPORTANT to keep consistent)
+                    detection_frame = full_timeline.merge(
+                        detection_frame,
+                        on=["Date", "Time"],
+                        how="left"
+                    )
+                
+                    # Sort properly (latest first)
+                    filtered = filtered.sort_values(["Date", "Time"], ascending=[False, False])
+                    detection_frame = detection_frame.sort_values(["Date", "Time"], ascending=[False, False])
     
             if not filtered.empty:
                 location_cols = [c for c in detection_frame.columns if c not in ("Date", "Time")]
