@@ -317,17 +317,8 @@ def fetch_all_data(start_date=None, end_date=None, batch_size=1000, columns=None
                 break
 
             offset += batch_size
-        df = pd.DataFrame(all_data)
 
-        if df.empty:
-            return df
-        
-        # ✅ FIX TYPES (CRITICAL so everything works properly)
-        df["Date"] = pd.to_datetime(df["Date"])
-        df["Time"] = pd.to_datetime(df["Time"], format="%H:%M:%S", errors="coerce").dt.time
-        
-        return df
-
+        return pd.DataFrame(all_data)
 
     except Exception as e:
         st.error(f"Error fetching all data from {DEFAULT_VIEW}: {e}")
@@ -379,8 +370,6 @@ def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vma
 
     rename = {lid: LOCATION_ID_TO_NAME.get(lid, lid) for lid in keep_ids}
     return df.rename(columns=rename)
-
-
 
 
 def show_login_page():
@@ -610,8 +599,6 @@ def main():
     
                 filtered = filter_frame(df_all, start_date, end_date, selected_ids, vmin, vmax)
                 detection_frame = filter_frame(df_all, start_date, end_date, selected_ids, None, None)
-                
-            
     
             if not filtered.empty:
                 location_cols = [c for c in detection_frame.columns if c not in ("Date", "Time")]
