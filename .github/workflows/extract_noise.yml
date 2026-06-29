@@ -25,7 +25,7 @@ jobs:
           pip install requests pandas xlsxwriter openpyxl
  
       - name: Run export
-        run: python extract_noise_apr2025_may2026.py
+        run: python extract_noise.py
  
       - name: Upload Excel file
         uses: actions/upload-artifact@v4
