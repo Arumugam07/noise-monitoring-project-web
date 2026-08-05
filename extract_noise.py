@@ -45,7 +45,6 @@ HEADERS = {
 
 
 def fetch_location_month(location_id, year, month):
-    """Fetch all rows for one location in one month. Paginated."""
     last_day = monthrange(year, month)[1]
     date_from = f"{year:04d}-{month:02d}-01T00:00:00+08:00"
     date_to   = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59+08:00"
@@ -56,7 +55,7 @@ def fetch_location_month(location_id, year, month):
     while True:
         resp = requests.get(
             f"{SUPABASE_URL}/rest/v1/{TABLE}",
-            headers=HEADERS,
+            headers={**HEADERS, "Prefer": "count=exact"},
             params=[
                 ("select",           "reading_datetime,reading_value"),
                 ("location_id",      f"eq.{location_id}"),
@@ -71,14 +70,30 @@ def fetch_location_month(location_id, year, month):
 
         if resp.status_code >= 400:
             print(f"    ERROR {resp.status_code}: {resp.text[:200]}")
-            return []
+            break
 
         rows = resp.json()
         all_rows.extend(rows)
 
-        if len(rows) < PAGE_SIZE:
+        content_range = resp.headers.get("Content-Range", "")
+        # format: "start-end/total"
+        total = None
+        if "/" in content_range:
+            total_part = content_range.split("/")[-1]
+            if total_part.isdigit():
+                total = int(total_part)
+
+        offset += len(rows)
+
+        # stop when we've genuinely reached the end
+        if len(rows) == 0:
             break
-        offset += PAGE_SIZE
+        if total is not None and offset >= total:
+            break
+        if len(rows) < PAGE_SIZE and total is None:
+            # fallback if count isn't available for some reason
+            break
+
         time.sleep(0.05)
 
     return all_rows
