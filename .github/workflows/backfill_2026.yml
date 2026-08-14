@@ -1,0 +1,23 @@
+name: Backfill Noise Data (2026 to now)
+on:
+  workflow_dispatch:
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      - name: Run Backfill (2026-01-01 to yesterday)
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
+          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+          API_BASE_URL: ${{ secrets.API_BASE_URL }}
+          SUPABASE_TABLE: meter_readings
+          BACKFILL_START_DATE: '2026-01-01'
+        run: python supabase_backfill_all.py
