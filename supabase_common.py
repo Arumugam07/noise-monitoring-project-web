@@ -22,6 +22,17 @@ Why have a common file at all?
   to read, avoiding copy-pasting the same logic into multiple places.
   If you prefer everything in one file, we can inline these helpers,
   but this layout is generally easier to maintain.
+
+CHANGELOG (build_rows):
+- Fixed a day-boundary bug: the upstream API interprets naive start/end
+  query params AS UTC, not SGT. The old code sent "{day}T00:00:00" /
+  "{day}T23:59:59" naively, intending an SGT calendar day, but actually
+  got the UTC calendar day instead (08:00 SGT that day -> ~07:59 SGT
+  the next day). Fixed by converting SGT day boundaries to UTC before
+  building the query string.
+- Added retry (up to 2 retries, 2s backoff) for transient failures
+  (timeouts, connection errors, 5xx), and treats a real 404 as
+  "confirmed no data" without retrying it.
 """
 
 import logging
@@ -61,23 +72,55 @@ LOCATIONS: List[Dict[str, str]] = [
 log = logging.getLogger("supabase-common")
 
 
-def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, object]]:
-    """Build per-minute rows for a Singapore calendar day for one location."""
-    # Explicitly calculate the 24-hour SGT calendar bounds for the requested date
-    start_str = f"{day.isoformat()}T00:00:00"
-    end_str = f"{day.isoformat()}T23:59:59"
-    
+def build_rows(api_base: str, loc: Dict[str, str], day: date,
+                max_retries: int = 2, retry_delay: float = 2.0) -> List[Dict[str, object]]:
+    """Build per-minute rows for an SGT calendar day for one location."""
+    # day boundaries in SGT, converted to UTC for the API call - the API
+    # interprets naive query params as UTC, so we must convert here rather
+    # than sending the SGT wall-clock values directly.
+    sgt_start = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=SGT)
+    sgt_end = sgt_start + timedelta(days=1) - timedelta(seconds=1)  # 23:59:59 SGT
+    utc_start = sgt_start.astimezone(timezone.utc)
+    utc_end = sgt_end.astimezone(timezone.utc)
+
+    start_str = utc_start.strftime("%Y-%m-%dT%H:%M:%S")
+    end_str = utc_end.strftime("%Y-%m-%dT%H:%M:%S")
+
     # Construct a clean URL that explicitly sets the start and end query bounds
     url = f"{api_base}/{loc['ID']}?start={start_str}&end={end_str}"
-    
-    try:
-        log.debug(f"Fetching: {url}")
-        r = requests.get(url, timeout=30)
-        r.raise_for_status()
-        raw = r.json()
-    except Exception as e:
-        log.warning(f"Fetch failed {loc['ID']} {day}: {e}")
-        return []
+
+    raw = None
+    for attempt in range(max_retries + 1):
+        try:
+            log.debug(f"Fetching: {url} (attempt {attempt + 1})")
+            r = requests.get(url, timeout=30)
+
+            if r.status_code == 404:
+                # Genuine "no data for this device/day" - don't retry, don't error.
+                log.debug(f"No data (404) for {loc['ID']} on {day}")
+                return []
+
+            r.raise_for_status()
+            raw = r.json()
+            break  # success
+
+        except requests.exceptions.RequestException as e:
+            is_last = attempt == max_retries
+            level = log.error if is_last else log.warning
+            level(
+                f"Fetch failed {loc['ID']} {day} (attempt {attempt + 1}/{max_retries + 1}): {e}"
+            )
+            if not is_last:
+                time.sleep(retry_delay)
+            else:
+                # Exhausted retries on a non-404 error - this is NOT the same
+                # as "no data", it's an unresolved failure. Surface it clearly
+                # so it isn't silently counted as an empty day.
+                log.error(
+                    f"GIVING UP on {loc['ID']} {day} after {max_retries + 1} attempts "
+                    f"- treating as failed fetch, NOT confirmed empty"
+                )
+                return []
 
     if not raw:
         log.debug(f"No data returned for {loc['ID']} on {day}")
@@ -85,28 +128,28 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
 
     now_plus_1h_utc = datetime.now(timezone.utc) + timedelta(hours=1)
     rows: List[Dict[str, object]] = []
-    
+
     for item in raw:
         # Use the actual timestamp from the API response
         try:
             dt_str = item.get("dt")
             if not dt_str:
                 continue
-            
+
             # Parse the ISO timestamp from API (format: "2025-05-06T23:00:00.000Z")
             ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-            
+
             # TRUNCATE to minute level (remove seconds and microseconds)
             ts_utc = ts_utc.replace(second=0, microsecond=0)
-            
+
         except Exception as e:
             log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
             continue
-        
+
         # Skip future timestamps (safety check)
         if ts_utc > now_plus_1h_utc:
             continue
-        
+
         # Extract the reading value
         value = None
         try:
@@ -114,7 +157,7 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
                 value = float(item.get("reading"))
         except Exception:
             value = None
-        
+
         # Build the row for Supabase
         rows.append({
             "location_id": loc["ID"],
@@ -123,7 +166,7 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date) -> List[Dict[str, 
             "reading_datetime": ts_utc.isoformat(),
             "created_at": datetime.now(timezone.utc).isoformat(),
         })
-    
+
     log.debug(f"Built {len(rows)} rows for {loc['ID']} on {day}")
     return rows
 
@@ -138,7 +181,7 @@ def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> 
     for row in rows:
         key = (row["location_id"], row["reading_datetime"])
         seen[key] = row  # later value overwrites earlier duplicate
-    
+
     deduped = list(seen.values())
     duplicates_removed = len(rows) - len(deduped)
     if duplicates_removed > 0:
