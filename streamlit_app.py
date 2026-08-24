@@ -38,6 +38,7 @@ LOCATION_ID_TO_NAME = {
 
 DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
 READINGS_PER_DAY = 1440  # 60 min/hour * 24 hours
+REPORTING_DAY_START_HOUR = 7
 # Adjusted thresholds for real-world data with gaps
 OFFLINE_THRESHOLD = 0.30  # < 30% data = offline (was 10%)
 DEGRADED_THRESHOLD = 0.70  # < 70% data = degraded (was 90%)
@@ -287,26 +288,73 @@ def get_client():
     return create_client(url, key)
 
 @st.cache_data(ttl=300)
-def fetch_all_data(start_date=None, end_date=None, batch_size=1000, columns=None) -> pd.DataFrame:
-    """Fetch ALL data matching date filters."""
+def fetch_all_data(start_date=None,
+    end_date=None,
+    batch_size=1000,
+    columns=None,
+) -> pd.DataFrame:
+    """
+    Fetch data using the raw API's reporting-day definition.
+
+    A reporting date runs from:
+        07:00 on the selected date
+        through
+        06:59 on the following calendar date.
+
+    Example:
+        Reporting date 2026-08-14 contains:
+        - 2026-08-14 07:00 to 23:59
+        - 2026-08-15 00:00 to 06:59
+    """
+
     supabase = get_client()
     all_data = []
     offset = 0
-    select_cols = ",".join(["Date", "Time"] + columns) if columns else "*"
+
+    select_cols = (
+        ",".join(["Date", "Time"] + columns)
+        if columns
+        else "*"
+    )
+
+    # We need the following calendar date because its readings from
+    # 00:00 to 06:59 belong to the preceding reporting date.
+    database_start_date = start_date
+
+    database_end_date = (
+        end_date + timedelta(days=1)
+        if end_date is not None
+        else None
+    )
 
     try:
         while True:
             query = supabase.table(DEFAULT_VIEW).select(select_cols)
 
-            if start_date:
-                query = query.gte("Date", str(start_date))
-            if end_date:
-                query = query.lte("Date", str(end_date))
+            if database_start_date is not None:
+                query = query.gte(
+                    "Date",
+                    str(database_start_date),
+                )
 
-            query = query.order("Date", desc=True).order("Time", desc=True).range(offset, offset + batch_size - 1)
+            if database_end_date is not None:
+                query = query.lte(
+                    "Date",
+                    str(database_end_date),
+                )
 
-            resp = query.execute()
-            batch = resp.data or []
+            query = (
+                query
+                .order("Date", desc=True)
+                .order("Time", desc=True)
+                .range(
+                    offset,
+                    offset + batch_size - 1,
+                )
+            )
+
+            response = query.execute()
+            batch = response.data or []
 
             if not batch:
                 break
@@ -318,12 +366,48 @@ def fetch_all_data(start_date=None, end_date=None, batch_size=1000, columns=None
 
             offset += batch_size
 
-        return pd.DataFrame(all_data)
+        df = pd.DataFrame(all_data)
+
+        if df.empty:
+            return df
+
+        # Convert the source calendar date.
+        df["Date"] = pd.to_datetime(
+            df["Date"],
+            errors="coerce",
+        ).dt.date
+
+        # Convert Time into a value that can be compared with 07:00.
+        time_delta = pd.to_timedelta(
+            df["Time"].astype(str),
+            errors="coerce",
+        )
+
+        reporting_day_start = pd.Timedelta(
+            hours=REPORTING_DAY_START_HOUR
+        )
+
+        # Readings from 00:00 through 06:59 belong to the previous
+        # reporting date.
+        early_morning_mask = (
+            time_delta < reporting_day_start
+        )
+
+        df.loc[early_morning_mask, "Date"] = (
+            pd.to_datetime(
+                df.loc[early_morning_mask, "Date"]
+            )
+            - pd.Timedelta(days=1)
+        ).dt.date
+
+        return df
 
     except Exception as e:
-        st.error(f"Error fetching all data from {DEFAULT_VIEW}: {e}")
+        st.error(
+            f"Error fetching all data from "
+            f"{DEFAULT_VIEW}: {e}"
+        )
         return pd.DataFrame()
-
 
 def filter_frame(df: pd.DataFrame, start_date, end_date, location_ids, vmin, vmax):
     if df.empty:
