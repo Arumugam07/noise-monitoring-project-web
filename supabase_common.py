@@ -72,47 +72,101 @@ LOCATIONS: List[Dict[str, str]] = [
 log = logging.getLogger("supabase-common")
 
 
-def build_rows(api_base: str, loc: Dict[str, str], day: date,
-                max_retries: int = 2, retry_delay: float = 2.0) -> List[Dict[str, object]]:
-    """Build per-minute rows for an SGT calendar day for one location."""
-    # The API expects the requested calendar date directly.
-    # Although returned timestamps end with "Z", the API website treats
-    # their date and time components as Singapore local time.
-    start_str = f"{day.isoformat()}T00:00:00"
-    end_str = f"{day.isoformat()}T23:59:59"
+def build_rows(
+    api_base: str,
+    loc: Dict[str, str],
+    day: date,
+    max_retries: int = 2,
+    retry_delay: float = 2.0,
+) -> List[Dict[str, object]]:
+    """
+    Fetch and build per-minute rows for one complete Singapore calendar day.
 
-    # Construct a clean URL that explicitly sets the start and end query bounds
-    url = f"{api_base}/{loc['ID']}?start={start_str}&end={end_str}"
+    The API query parameters are interpreted as UTC. Therefore, the requested
+    Singapore day must first be converted into its equivalent UTC range.
+
+    Example for 1 August 2026:
+        Singapore: 2026-08-01 00:00:00 to 23:59:59
+        UTC:       2026-07-31 16:00:00 to 2026-08-01 15:59:59
+
+    API timestamps ending with "Z" are parsed as genuine UTC timestamps.
+    """
+
+    # Build the beginning and end of the requested Singapore calendar day.
+    sgt_start = datetime(
+        day.year,
+        day.month,
+        day.day,
+        0,
+        0,
+        0,
+        tzinfo=SGT,
+    )
+
+    sgt_end = sgt_start + timedelta(days=1) - timedelta(seconds=1)
+
+    # Convert the Singapore day boundaries to UTC for the API request.
+    utc_start = sgt_start.astimezone(timezone.utc)
+    utc_end = sgt_end.astimezone(timezone.utc)
+
+    # The API expects naive-looking query parameters representing UTC.
+    start_str = utc_start.strftime("%Y-%m-%dT%H:%M:%S")
+    end_str = utc_end.strftime("%Y-%m-%dT%H:%M:%S")
+
+    url = (
+        f"{api_base}/{loc['ID']}"
+        f"?start={start_str}&end={end_str}"
+    )
+
+    log.info(
+        f"Fetching {loc['ID']} for SGT date {day}: "
+        f"UTC {start_str} to {end_str}"
+    )
 
     raw = None
 
     for attempt in range(max_retries + 1):
         try:
-            log.debug(f"Fetching: {url} (attempt {attempt + 1})")
-            r = requests.get(url, timeout=30)
-    
-            # Confirmed no data for this sensor/day
-            if r.status_code == 404:
+            log.debug(
+                f"Fetching: {url} "
+                f"(attempt {attempt + 1}/{max_retries + 1})"
+            )
+
+            response = requests.get(url, timeout=30)
+
+            # A real 404 is treated as confirmed no sensor data.
+            if response.status_code == 404:
                 log.warning(
-                    f"Confirmed no data (404) for {loc['ID']} on {day}"
+                    f"Confirmed no data (404) for "
+                    f"{loc['ID']} on {day}"
                 )
                 return []
-    
-            r.raise_for_status()
-    
+
+            # Raises an exception for 4xx or 5xx responses.
+            response.raise_for_status()
+
             try:
-                raw = r.json()
+                raw = response.json()
             except ValueError as e:
                 raise RuntimeError(
-                    f"API returned invalid JSON for {loc['ID']} on {day}"
+                    f"API returned invalid JSON for "
+                    f"{loc['ID']} on {day}"
                 ) from e
-    
-            # Successful API response
+
+            # Validate the expected API response structure.
+            if not isinstance(raw, list):
+                raise RuntimeError(
+                    f"Unexpected API response for {loc['ID']} on {day}. "
+                    f"Expected a list but received "
+                    f"{type(raw).__name__}."
+                )
+
+            # API request completed successfully.
             break
-    
+
         except requests.exceptions.RequestException as e:
             is_last_attempt = attempt == max_retries
-    
+
             if not is_last_attempt:
                 log.warning(
                     f"Fetch failed for {loc['ID']} on {day} "
@@ -121,72 +175,146 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date,
                 )
                 time.sleep(retry_delay)
             else:
-                # This is an API/network failure, not confirmed sensor downtime.
+                # A network/API failure is not confirmed sensor downtime.
                 raise RuntimeError(
                     f"Unable to fetch {loc['ID']} on {day} after "
                     f"{max_retries + 1} attempts: {e}"
                 ) from e
-    
-    # HTTP 200 but empty response means confirmed no sensor readings
+
+    # HTTP 200 with an empty list means confirmed no sensor readings.
     if not raw:
         log.warning(
-            f"Confirmed no data in API response for {loc['ID']} on {day}"
+            f"Confirmed no data in successful API response for "
+            f"{loc['ID']} on {day}"
         )
         return []
-      
+
+    log.info(
+        f"API returned {len(raw)} raw records for "
+        f"{loc['ID']} on {day}"
+    )
+
+    # Helpful diagnostic information for checking API boundaries.
+    first_raw_dt = raw[0].get("dt") if isinstance(raw[0], dict) else None
+    last_raw_dt = raw[-1].get("dt") if isinstance(raw[-1], dict) else None
+
+    log.info(
+        f"Raw API timestamp range for {loc['ID']} on {day}: "
+        f"{first_raw_dt} to {last_raw_dt}"
+    )
+
     now_plus_1h_utc = datetime.now(timezone.utc) + timedelta(hours=1)
+    created_at = datetime.now(timezone.utc).isoformat()
+
     rows: List[Dict[str, object]] = []
+    invalid_timestamp_count = 0
+    outside_day_count = 0
+    future_timestamp_count = 0
 
     for item in raw:
-        # Use the actual timestamp from the API response
+        if not isinstance(item, dict):
+            log.warning(
+                f"Skipping unexpected non-object API item for "
+                f"{loc['ID']} on {day}: {item}"
+            )
+            continue
+
         try:
             dt_str = item.get("dt")
+
             if not dt_str:
+                invalid_timestamp_count += 1
                 continue
 
-            # The API timestamp ends with "Z", but its website treats the date/time
-            # portion as Singapore local time. Remove Z, assign SGT, then convert
-            # to genuine UTC for storage in Supabase.
-            clean_dt = dt_str.strip()
-            
-            if clean_dt.endswith("Z"):
-                clean_dt = clean_dt[:-1]
-            
-            source_sgt = datetime.fromisoformat(clean_dt).replace(tzinfo=SGT)
-            
-            ts_utc = (
-                source_sgt
-                .astimezone(timezone.utc)
-                .replace(second=0, microsecond=0)
+            # The API's trailing Z represents UTC.
+            ts_utc = datetime.fromisoformat(
+                dt_str.strip().replace("Z", "+00:00")
             )
 
-        except Exception as e:
-            log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
+            # Ensure the parsed timestamp is timezone-aware and UTC.
+            if ts_utc.tzinfo is None:
+                ts_utc = ts_utc.replace(tzinfo=timezone.utc)
+            else:
+                ts_utc = ts_utc.astimezone(timezone.utc)
+
+            # Store one timestamp per minute.
+            ts_utc = ts_utc.replace(second=0, microsecond=0)
+
+        except (TypeError, ValueError) as e:
+            invalid_timestamp_count += 1
+            log.warning(
+                f"Invalid timestamp for {loc['ID']}: "
+                f"{item.get('dt')} - {e}"
+            )
             continue
 
-        # Skip future timestamps (safety check)
+        # Convert back to SGT to confirm the reading belongs to the
+        # Singapore calendar day that was requested.
+        ts_sgt = ts_utc.astimezone(SGT)
+
+        if ts_sgt.date() != day:
+            outside_day_count += 1
+            log.warning(
+                f"Skipping out-of-day reading for {loc['ID']}: "
+                f"raw={item.get('dt')}, "
+                f"SGT={ts_sgt.isoformat()}, "
+                f"requested_day={day}"
+            )
+            continue
+
+        # Safety check against unexpectedly future-dated readings.
         if ts_utc > now_plus_1h_utc:
+            future_timestamp_count += 1
             continue
 
-        # Extract the reading value
+        # Extract the reading value.
         value = None
+
         try:
             if item.get("reading") is not None:
-                value = float(item.get("reading"))
-        except Exception:
+                value = float(item["reading"])
+        except (TypeError, ValueError):
+            log.warning(
+                f"Invalid reading value for {loc['ID']} at "
+                f"{item.get('dt')}: {item.get('reading')}"
+            )
             value = None
 
-        # Build the row for Supabase
         rows.append({
             "location_id": loc["ID"],
             "location_name": loc["Name"],
             "reading_value": value,
             "reading_datetime": ts_utc.isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": created_at,
         })
 
-    log.debug(f"Built {len(rows)} rows for {loc['ID']} on {day}")
-    return rows
+    # Deduplicate the API response at minute level.
+    # Later entries replace earlier entries for the same location/minute.
+    deduplicated_rows = {}
+
+    for row in rows:
+        key = (
+            row["location_id"],
+            row["reading_datetime"],
+        )
+        deduplicated_rows[key] = row
+
+    final_rows = list(deduplicated_rows.values())
+    duplicates_removed = len(rows) - len(final_rows)
+
+    # Sort chronologically for predictable output and upserts.
+    final_rows.sort(key=lambda row: row["reading_datetime"])
+
+    log.info(
+        f"Built {len(final_rows)} rows for {loc['ID']} on {day}. "
+        f"Raw={len(raw)}, "
+        f"duplicates_removed={duplicates_removed}, "
+        f"invalid_timestamps={invalid_timestamp_count}, "
+        f"outside_requested_day={outside_day_count}, "
+        f"future_timestamps={future_timestamp_count}"
+    )
+
+    return final_rows
 
 
 def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> int:
