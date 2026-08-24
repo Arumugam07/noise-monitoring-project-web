@@ -20,4 +20,4 @@ jobs:
           API_BASE_URL: ${{ secrets.API_BASE_URL }}
           SUPABASE_TABLE: meter_readings
           BACKFILL_START_DATE: '2026-01-01'
-        run: python test_fetch.py
+        run: python diagnose_api_time.py
