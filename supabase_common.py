@@ -24,15 +24,16 @@ Why have a common file at all?
   but this layout is generally easier to maintain.
 
 CHANGELOG (build_rows):
-- Fixed a day-boundary bug: the upstream API interprets naive start/end
-  query params AS UTC, not SGT. The old code sent "{day}T00:00:00" /
-  "{day}T23:59:59" naively, intending an SGT calendar day, but actually
-  got the UTC calendar day instead (08:00 SGT that day -> ~07:59 SGT
-  the next day). Fixed by converting SGT day boundaries to UTC before
-  building the query string.
-- Added retry (up to 2 retries, 2s backoff) for transient failures
-  (timeouts, connection errors, 5xx), and treats a real 404 as
-  "confirmed no data" without retrying it.
+- The API's start=YYYY-MM-DD parameter selects one UTC calendar date.
+- A Singapore calendar day spans two UTC dates:
+  - Previous UTC date supplies 00:00-07:59 SGT.
+  - Current UTC date supplies 08:00-23:59 SGT.
+- build_rows now fetches both API dates using start only, combines them,
+  and filters the result to the exact requested Singapore calendar day.
+- Added retry handling for transient API failures.
+- HTTP 404 and successful empty responses represent confirmed no data.
+- Network and server failures are raised instead of being treated as
+  sensor downtime.
 """
 
 import logging
@@ -353,8 +354,10 @@ def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> 
                 inserted += len(resp.data)
 
         except Exception as e:
-            log.error(f"Error upserting chunk {i}-{i+len(chunk)}: {e}")
-            continue
+            raise RuntimeError(
+                f"Database upsert failed for chunk "
+                f"{i}-{i + len(chunk)}"
+            ) from e
 
     return inserted
 
