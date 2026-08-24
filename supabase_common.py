@@ -75,57 +75,65 @@ log = logging.getLogger("supabase-common")
 def build_rows(api_base: str, loc: Dict[str, str], day: date,
                 max_retries: int = 2, retry_delay: float = 2.0) -> List[Dict[str, object]]:
     """Build per-minute rows for an SGT calendar day for one location."""
-    # day boundaries in SGT, converted to UTC for the API call - the API
-    # interprets naive query params as UTC, so we must convert here rather
-    # than sending the SGT wall-clock values directly.
-    sgt_start = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=SGT)
-    sgt_end = sgt_start + timedelta(days=1) - timedelta(seconds=1)  # 23:59:59 SGT
-    utc_start = sgt_start.astimezone(timezone.utc)
-    utc_end = sgt_end.astimezone(timezone.utc)
-
-    start_str = utc_start.strftime("%Y-%m-%dT%H:%M:%S")
-    end_str = utc_end.strftime("%Y-%m-%dT%H:%M:%S")
+    # The API expects the requested calendar date directly.
+    # Although returned timestamps end with "Z", the API website treats
+    # their date and time components as Singapore local time.
+    start_str = f"{day.isoformat()}T00:00:00"
+    end_str = f"{day.isoformat()}T23:59:59"
 
     # Construct a clean URL that explicitly sets the start and end query bounds
     url = f"{api_base}/{loc['ID']}?start={start_str}&end={end_str}"
 
     raw = None
+
     for attempt in range(max_retries + 1):
         try:
             log.debug(f"Fetching: {url} (attempt {attempt + 1})")
             r = requests.get(url, timeout=30)
-
+    
+            # Confirmed no data for this sensor/day
             if r.status_code == 404:
-                # Genuine "no data for this device/day" - don't retry, don't error.
-                log.debug(f"No data (404) for {loc['ID']} on {day}")
-                return []
-
-            r.raise_for_status()
-            raw = r.json()
-            break  # success
-
-        except requests.exceptions.RequestException as e:
-            is_last = attempt == max_retries
-            level = log.error if is_last else log.warning
-            level(
-                f"Fetch failed {loc['ID']} {day} (attempt {attempt + 1}/{max_retries + 1}): {e}"
-            )
-            if not is_last:
-                time.sleep(retry_delay)
-            else:
-                # Exhausted retries on a non-404 error - this is NOT the same
-                # as "no data", it's an unresolved failure. Surface it clearly
-                # so it isn't silently counted as an empty day.
-                log.error(
-                    f"GIVING UP on {loc['ID']} {day} after {max_retries + 1} attempts "
-                    f"- treating as failed fetch, NOT confirmed empty"
+                log.warning(
+                    f"Confirmed no data (404) for {loc['ID']} on {day}"
                 )
                 return []
-
+    
+            r.raise_for_status()
+    
+            try:
+                raw = r.json()
+            except ValueError as e:
+                raise RuntimeError(
+                    f"API returned invalid JSON for {loc['ID']} on {day}"
+                ) from e
+    
+            # Successful API response
+            break
+    
+        except requests.exceptions.RequestException as e:
+            is_last_attempt = attempt == max_retries
+    
+            if not is_last_attempt:
+                log.warning(
+                    f"Fetch failed for {loc['ID']} on {day} "
+                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}. "
+                    f"Retrying in {retry_delay} seconds."
+                )
+                time.sleep(retry_delay)
+            else:
+                # This is an API/network failure, not confirmed sensor downtime.
+                raise RuntimeError(
+                    f"Unable to fetch {loc['ID']} on {day} after "
+                    f"{max_retries + 1} attempts: {e}"
+                ) from e
+    
+    # HTTP 200 but empty response means confirmed no sensor readings
     if not raw:
-        log.debug(f"No data returned for {loc['ID']} on {day}")
+        log.warning(
+            f"Confirmed no data in API response for {loc['ID']} on {day}"
+        )
         return []
-
+      
     now_plus_1h_utc = datetime.now(timezone.utc) + timedelta(hours=1)
     rows: List[Dict[str, object]] = []
 
@@ -136,11 +144,21 @@ def build_rows(api_base: str, loc: Dict[str, str], day: date,
             if not dt_str:
                 continue
 
-            # Parse the ISO timestamp from API (format: "2025-05-06T23:00:00.000Z")
-            ts_utc = datetime.fromisoformat(dt_str.replace('Z', '+00:00'))
-
-            # TRUNCATE to minute level (remove seconds and microseconds)
-            ts_utc = ts_utc.replace(second=0, microsecond=0)
+            # The API timestamp ends with "Z", but its website treats the date/time
+            # portion as Singapore local time. Remove Z, assign SGT, then convert
+            # to genuine UTC for storage in Supabase.
+            clean_dt = dt_str.strip()
+            
+            if clean_dt.endswith("Z"):
+                clean_dt = clean_dt[:-1]
+            
+            source_sgt = datetime.fromisoformat(clean_dt).replace(tzinfo=SGT)
+            
+            ts_utc = (
+                source_sgt
+                .astimezone(timezone.utc)
+                .replace(second=0, microsecond=0)
+            )
 
         except Exception as e:
             log.warning(f"Invalid timestamp for {loc['ID']}: {item.get('dt')} - {e}")
