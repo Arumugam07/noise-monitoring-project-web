@@ -80,103 +80,146 @@ def build_rows(
     retry_delay: float = 2.0,
 ) -> List[Dict[str, object]]:
     """
-    Fetch one device-day using the same request as the raw API website.
+    Build rows for one Singapore calendar day.
 
-    The working raw website sends only:
-        /meter-sound/{location_id}?start=YYYY-MM-DD
+    The upstream API's start=YYYY-MM-DD parameter selects a UTC calendar
+    date. A Singapore calendar day spans two UTC dates, so we fetch:
 
-    Do not add an end parameter because the API returns a different,
-    incomplete range when end is included.
+      1. The previous UTC date for 00:00-07:59 SGT
+      2. The current UTC date for 08:00-23:59 SGT
+
+    The results are combined and filtered to the exact Singapore day.
     """
 
-    # Reproduce the raw website's request exactly.
-    url = (
-        f"{api_base}/{loc['ID']}"
-        f"?start={day.isoformat()}"
+    # Exact requested Singapore-day boundaries.
+    sgt_start = datetime(
+        day.year,
+        day.month,
+        day.day,
+        0,
+        0,
+        0,
+        tzinfo=SGT,
     )
 
-    raw = None
+    sgt_end_exclusive = sgt_start + timedelta(days=1)
 
-    for attempt in range(max_retries + 1):
-        try:
-            log.info(
-                f"Fetching {loc['ID']} on {day} "
-                f"(attempt {attempt + 1}/{max_retries + 1})"
-            )
-            log.debug(f"API URL: {url}")
+    # Equivalent exact UTC range.
+    utc_start = sgt_start.astimezone(timezone.utc)
+    utc_end_exclusive = sgt_end_exclusive.astimezone(timezone.utc)
 
-            response = requests.get(url, timeout=30)
+    # Example for 1 August SGT:
+    # utc_start         = 31 July 16:00 UTC
+    # utc_end_exclusive = 1 August 16:00 UTC
+    previous_utc_date = utc_start.date()
+    current_utc_date = utc_end_exclusive.date()
 
-            # Confirmed no data for this sensor/day.
-            if response.status_code == 404:
-                log.warning(
-                    f"Confirmed no data (404) for "
-                    f"{loc['ID']} on {day}"
-                )
-                return []
+    api_dates = [
+        previous_utc_date,
+        current_utc_date,
+    ]
 
-            response.raise_for_status()
+    combined_raw = []
 
+    for part_number, api_date in enumerate(api_dates, start=1):
+        # Reproduce the raw website request exactly: start only, no end.
+        url = (
+            f"{api_base}/{loc['ID']}"
+            f"?start={api_date.isoformat()}"
+        )
+
+        raw = None
+
+        for attempt in range(max_retries + 1):
             try:
-                raw = response.json()
-            except ValueError as e:
-                raise RuntimeError(
-                    f"API returned invalid JSON for "
-                    f"{loc['ID']} on {day}"
-                ) from e
-
-            if not isinstance(raw, list):
-                raise RuntimeError(
-                    f"Unexpected API response for {loc['ID']} on {day}. "
-                    f"Expected list, received {type(raw).__name__}."
+                log.info(
+                    f"Fetching part {part_number}/2 for "
+                    f"{loc['ID']} on SGT date {day}: "
+                    f"API UTC date {api_date}"
                 )
 
-            break
+                log.debug(f"API URL: {url}")
 
-        except requests.exceptions.RequestException as e:
-            is_last_attempt = attempt == max_retries
+                response = requests.get(url, timeout=30)
 
-            if not is_last_attempt:
-                log.warning(
-                    f"Fetch failed for {loc['ID']} on {day} "
-                    f"(attempt {attempt + 1}/{max_retries + 1}): {e}. "
-                    f"Retrying in {retry_delay} seconds."
-                )
-                time.sleep(retry_delay)
-            else:
-                # Fetch failure is not confirmed sensor downtime.
-                raise RuntimeError(
-                    f"Unable to fetch {loc['ID']} on {day} after "
-                    f"{max_retries + 1} attempts: {e}"
-                ) from e
+                # Confirmed no data for this device/API date.
+                if response.status_code == 404:
+                    log.warning(
+                        f"Confirmed no data (404) for "
+                        f"{loc['ID']} on API date {api_date}"
+                    )
+                    raw = []
+                    break
 
-    # HTTP 200 with an empty list means confirmed no readings.
-    if not raw:
+                response.raise_for_status()
+
+                try:
+                    raw = response.json()
+                except ValueError as e:
+                    raise RuntimeError(
+                        f"API returned invalid JSON for "
+                        f"{loc['ID']} on API date {api_date}"
+                    ) from e
+
+                if not isinstance(raw, list):
+                    raise RuntimeError(
+                        f"Unexpected API response for {loc['ID']} "
+                        f"on API date {api_date}. Expected list, "
+                        f"received {type(raw).__name__}."
+                    )
+
+                break
+
+            except requests.exceptions.RequestException as e:
+                is_last_attempt = attempt == max_retries
+
+                if not is_last_attempt:
+                    log.warning(
+                        f"Fetch failed for {loc['ID']} on API date "
+                        f"{api_date} "
+                        f"(attempt {attempt + 1}/"
+                        f"{max_retries + 1}): {e}. "
+                        f"Retrying in {retry_delay} seconds."
+                    )
+                    time.sleep(retry_delay)
+                else:
+                    # API/network failure is not sensor downtime.
+                    raise RuntimeError(
+                        f"Unable to fetch {loc['ID']} on API date "
+                        f"{api_date} after {max_retries + 1} "
+                        f"attempts: {e}"
+                    ) from e
+
+        if raw:
+            log.info(
+                f"API date {api_date} returned {len(raw)} records. "
+                f"First={raw[0].get('dt')}, "
+                f"last={raw[-1].get('dt')}"
+            )
+            combined_raw.extend(raw)
+        else:
+            log.warning(
+                f"No readings returned for {loc['ID']} "
+                f"on API date {api_date}"
+            )
+
+    # Both successful requests contained no readings.
+    if not combined_raw:
         log.warning(
-            f"Confirmed no data in API response for "
-            f"{loc['ID']} on {day}"
+            f"Confirmed no sensor readings for "
+            f"{loc['ID']} on SGT date {day}"
         )
         return []
-
-    log.info(
-        f"API returned {len(raw)} records for "
-        f"{loc['ID']} on {day}"
-    )
-
-    log.info(
-        f"Raw timestamp range: "
-        f"{raw[0].get('dt')} to {raw[-1].get('dt')}"
-    )
 
     created_at = datetime.now(timezone.utc).isoformat()
     now_plus_1h_utc = datetime.now(timezone.utc) + timedelta(hours=1)
 
     rows_by_minute = {}
     invalid_count = 0
-    wrong_date_count = 0
+    outside_range_count = 0
     future_count = 0
 
-    for item in raw:
+    for item in combined_raw:
         if not isinstance(item, dict):
             invalid_count += 1
             continue
@@ -188,25 +231,19 @@ def build_rows(
             continue
 
         try:
-            cleaned_dt = dt_str.strip()
+            # The API timestamps ending with Z are genuine UTC.
+            ts_utc = datetime.fromisoformat(
+                dt_str.strip().replace("Z", "+00:00")
+            )
 
-            # The raw website associates the timestamp's displayed date/time
-            # directly with the selected Singapore calendar date. Remove Z,
-            # assign Singapore timezone, then convert to UTC for Supabase.
-            if cleaned_dt.endswith("Z"):
-                cleaned_dt = cleaned_dt[:-1]
+            if ts_utc.tzinfo is None:
+                ts_utc = ts_utc.replace(tzinfo=timezone.utc)
+            else:
+                ts_utc = ts_utc.astimezone(timezone.utc)
 
-            source_sgt = datetime.fromisoformat(cleaned_dt)
-
-            if source_sgt.tzinfo is not None:
-                source_sgt = source_sgt.replace(tzinfo=None)
-
-            source_sgt = source_sgt.replace(tzinfo=SGT)
-
-            ts_utc = (
-                source_sgt
-                .astimezone(timezone.utc)
-                .replace(second=0, microsecond=0)
+            ts_utc = ts_utc.replace(
+                second=0,
+                microsecond=0,
             )
 
         except (TypeError, ValueError) as e:
@@ -217,9 +254,9 @@ def build_rows(
             )
             continue
 
-        # Confirm that the API reading belongs to the requested date.
-        if ts_utc.astimezone(SGT).date() != day:
-            wrong_date_count += 1
+        # Keep only readings belonging to the requested Singapore day.
+        if not (utc_start <= ts_utc < utc_end_exclusive):
+            outside_range_count += 1
             continue
 
         if ts_utc > now_plus_1h_utc:
@@ -245,6 +282,7 @@ def build_rows(
             "created_at": created_at,
         }
 
+        # Prevent duplicate location/minute rows.
         key = (
             row["location_id"],
             row["reading_datetime"],
@@ -257,22 +295,29 @@ def build_rows(
         key=lambda row: row["reading_datetime"],
     )
 
-    duplicates_removed = (
-        len(raw)
-        - invalid_count
-        - wrong_date_count
-        - future_count
-        - len(rows)
-    )
-
     log.info(
-        f"Built {len(rows)} rows for {loc['ID']} on {day}. "
-        f"Raw={len(raw)}, "
-        f"duplicates_removed={max(duplicates_removed, 0)}, "
+        f"Built {len(rows)} rows for {loc['ID']} "
+        f"on SGT date {day}. "
+        f"Combined raw={len(combined_raw)}, "
+        f"outside range={outside_range_count}, "
         f"invalid={invalid_count}, "
-        f"wrong_date={wrong_date_count}, "
         f"future={future_count}"
     )
+
+    if rows:
+        first_sgt = datetime.fromisoformat(
+            rows[0]["reading_datetime"]
+        ).astimezone(SGT)
+
+        last_sgt = datetime.fromisoformat(
+            rows[-1]["reading_datetime"]
+        ).astimezone(SGT)
+
+        log.info(
+            f"Final SGT range for {loc['ID']} on {day}: "
+            f"{first_sgt.isoformat()} to "
+            f"{last_sgt.isoformat()}"
+        )
 
     return rows
 
