@@ -1,0 +1,124 @@
+name: Aiven Migration - Connection and Schema Check
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aiven-migration
+  cancel-in-progress: false
+
+jobs:
+  migration-check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    container:
+      image: postgres:18
+
+    env:
+      SOURCE_URL: ${{ secrets.MIGRATION_SOURCE_DATABASE_URL }}
+      TARGET_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+      PGCONNECT_TIMEOUT: "30"
+
+    steps:
+      - name: Prepare certificate and check secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          test -n "$SOURCE_URL" || {
+            echo "Missing MIGRATION_SOURCE_DATABASE_URL"
+            exit 1
+          }
+
+          test -n "$TARGET_URL" || {
+            echo "Missing AIVEN_DATABASE_URL"
+            exit 1
+          }
+
+          test -n "$AIVEN_CA_CERT" || {
+            echo "Missing AIVEN_CA_CERT"
+            exit 1
+          }
+
+          mkdir -p migration-check
+          printf '%s\n' "$AIVEN_CA_CERT" > /tmp/aiven-ca.pem
+
+      - name: Check Supabase connection
+        shell: bash
+        env:
+          PGSSLMODE: require
+        run: |
+          set -euo pipefail
+
+          psql "$SOURCE_URL" -X --set=ON_ERROR_STOP=1 \
+            --command="SELECT current_setting('server_version') AS source_version;" \
+            > migration-check/source-version.txt
+
+          cat migration-check/source-version.txt
+
+      - name: Check Aiven connection
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          psql "$TARGET_URL sslmode=verify-full sslrootcert=/tmp/aiven-ca.pem" \
+            -X --set=ON_ERROR_STOP=1 \
+            --command="SELECT current_setting('server_version') AS target_version;" \
+            > migration-check/target-version.txt
+
+          cat migration-check/target-version.txt
+
+      - name: Check existing Aiven objects
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          psql "$TARGET_URL sslmode=verify-full sslrootcert=/tmp/aiven-ca.pem" \
+            -X --set=ON_ERROR_STOP=1 --csv \
+            --command="
+              SELECT c.relname AS object_name, c.relkind AS object_kind
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public'
+                AND c.relkind IN ('r','p','v','m','S')
+              ORDER BY c.relname;
+            " > migration-check/aiven-existing-objects.csv
+
+      - name: Export application schema without readings
+        shell: bash
+        env:
+          PGSSLMODE: require
+        run: |
+          set -euo pipefail
+
+          pg_dump \
+            --dbname="$SOURCE_URL" \
+            --schema=public \
+            --schema-only \
+            --no-owner \
+            --no-privileges \
+            --no-publications \
+            --no-subscriptions \
+            --file=migration-check/public-schema.sql
+
+          test -s migration-check/public-schema.sql
+          echo "Application schema export completed."
+
+      - name: Save inspection files
+        uses: actions/upload-artifact@v4
+        with:
+          name: aiven-migration-check
+          path: migration-check/
+          retention-days: 3
+          if-no-files-found: error
+
+      - name: Remove temporary certificate
+        if: always()
+        shell: bash
+        run: rm -f /tmp/aiven-ca.pem
