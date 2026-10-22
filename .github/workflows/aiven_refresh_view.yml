@@ -1,0 +1,63 @@
+name: Aiven - Populate Dashboard View
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aiven-migration
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    container:
+      image: postgres:18
+
+    env:
+      TARGET_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+      PGCONNECT_TIMEOUT: "30"
+
+    steps:
+      - name: Populate and check dashboard view
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          test -n "$TARGET_URL"
+          test -n "$AIVEN_CA_CERT"
+
+          printf '%s\n' "$AIVEN_CA_CERT" > /tmp/aiven-ca.pem
+
+          case "$TARGET_URL" in
+            *\?*) separator="&" ;;
+            *) separator="?" ;;
+          esac
+
+          connection="${TARGET_URL}${separator}sslmode=verify-full&sslrootcert=/tmp/aiven-ca.pem"
+
+          psql "$connection" -X --set=ON_ERROR_STOP=1 <<'SQL'
+          SET statement_timeout = '45min';
+          SET lock_timeout = '10s';
+
+          REFRESH MATERIALIZED VIEW public.wide_view_mv;
+
+          ANALYZE public.wide_view_mv;
+
+          SELECT
+              COUNT(*) AS dashboard_rows,
+              MIN("Date") AS earliest_date,
+              MAX("Date") AS latest_date
+          FROM public.wide_view_mv;
+          SQL
+
+      - name: Remove certificate
+        if: always()
+        shell: bash
+        run: rm -f /tmp/aiven-ca.pem
