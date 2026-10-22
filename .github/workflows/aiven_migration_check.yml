@@ -67,7 +67,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          psql "$TARGET_URL sslmode=verify-full sslrootcert=/tmp/aiven-ca.pem" \
+          psql "${TARGET_URL}&sslmode=verify-full&sslrootcert=/tmp/aiven-ca.pem" \
             -X --set=ON_ERROR_STOP=1 \
             --command="SELECT current_setting('server_version') AS target_version;" \
             > migration-check/target-version.txt
@@ -79,7 +79,7 @@ jobs:
         run: |
           set -euo pipefail
 
-          psql "$TARGET_URL sslmode=verify-full sslrootcert=/tmp/aiven-ca.pem" \
+          psql "${TARGET_URL}&sslmode=verify-full&sslrootcert=/tmp/aiven-ca.pem" \
             -X --set=ON_ERROR_STOP=1 --csv \
             --command="
               SELECT c.relname AS object_name, c.relkind AS object_kind
