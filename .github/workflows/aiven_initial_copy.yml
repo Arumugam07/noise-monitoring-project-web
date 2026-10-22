@@ -1,0 +1,173 @@
+name: Aiven Migration - Initial Database Copy
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: aiven-migration
+  cancel-in-progress: false
+
+jobs:
+  copy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    container:
+      image: postgres:18
+
+    env:
+      SOURCE_URL: ${{ secrets.MIGRATION_SOURCE_DATABASE_URL }}
+      TARGET_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+      PGCONNECT_TIMEOUT: "30"
+
+    steps:
+      - name: Prepare connections
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+
+          test -n "$SOURCE_URL"
+          test -n "$TARGET_URL"
+          test -n "$AIVEN_CA_CERT"
+
+          printf '%s\n' "$AIVEN_CA_CERT" > /tmp/aiven-ca.pem
+
+          case "$TARGET_URL" in
+            *\?*) separator="&" ;;
+            *) separator="?" ;;
+          esac
+
+          printf 'TARGET_VERIFIED=%s%s%s\n' \
+            "$TARGET_URL" "$separator" \
+            "sslmode=verify-full&sslrootcert=/tmp/aiven-ca.pem" \
+            >> "$GITHUB_ENV"
+
+      - name: Require empty destination
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          objects=$(psql "$TARGET_VERIFIED" -X -At \
+            --set=ON_ERROR_STOP=1 --command="
+              SELECT count(*)
+              FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+              WHERE n.nspname = 'public'
+                AND c.relkind IN ('r','p','v','m','S');
+            ")
+
+          if [ "$objects" != "0" ]; then
+            echo "STOP: Aiven public schema is not empty."
+            echo "No objects will be deleted or overwritten."
+            exit 1
+          fi
+
+      - name: Export Supabase application database
+        shell: bash
+        env:
+          PGSSLMODE: require
+        run: |
+          set -euo pipefail
+
+          pg_dump \
+            --dbname="$SOURCE_URL" \
+            --format=custom \
+            --schema=public \
+            --no-owner \
+            --no-privileges \
+            --no-publications \
+            --no-subscriptions \
+            --file=/tmp/noise.dump
+
+          test -s /tmp/noise.dump
+          echo "Database export completed."
+
+      - name: Prepare portable restore list
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pg_restore --list /tmp/noise.dump > /tmp/all.list
+
+          awk '
+            /^;/ { print; next }
+            / SCHEMA - public / { next }
+            / COMMENT - SCHEMA public / { next }
+            / POLICY public / { next }
+            / FUNCTION public import_noise_data_for_day\(/ { next }
+            / MATERIALIZED VIEW DATA public / { next }
+            { print }
+          ' /tmp/all.list > /tmp/restore.list
+
+          echo "Restore list prepared."
+          echo "Materialized view results will be populated separately."
+
+      - name: Restore into Aiven
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          pg_restore \
+            --dbname="$TARGET_VERIFIED" \
+            --use-list=/tmp/restore.list \
+            --no-owner \
+            --no-privileges \
+            --no-comments \
+            --exit-on-error \
+            --single-transaction \
+            /tmp/noise.dump
+
+          echo "Tables and database definitions restored."
+
+      - name: Report restored table counts
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          psql "$TARGET_VERIFIED" -X \
+            --set=ON_ERROR_STOP=1 --command="
+              SELECT 'meter_readings' AS table_name,
+                     count(*) AS rows
+              FROM public.meter_readings
+
+              UNION ALL
+
+              SELECT 'meter_readings_backup_before_timezone_fix',
+                     count(*)
+              FROM public.meter_readings_backup_before_timezone_fix
+
+              UNION ALL
+
+              SELECT 'monthly_persisted_summary',
+                     count(*)
+              FROM public.monthly_persisted_summary
+
+              UNION ALL
+
+              SELECT 'noise_excel_export_2025_2026_v2',
+                     count(*)
+              FROM public.noise_excel_export_2025_2026_v2;
+            "
+
+          psql "$TARGET_VERIFIED" -X \
+            --set=ON_ERROR_STOP=1 --command="
+              SELECT location_id,
+                     count(*) AS rows,
+                     min(reading_datetime) AS earliest_utc,
+                     max(reading_datetime) AS latest_utc
+              FROM public.meter_readings
+              GROUP BY location_id
+              ORDER BY location_id;
+            "
+
+      - name: Remove temporary files
+        if: always()
+        shell: bash
+        run: |
+          rm -f /tmp/noise.dump /tmp/aiven-ca.pem
+          rm -f /tmp/all.list /tmp/restore.list
