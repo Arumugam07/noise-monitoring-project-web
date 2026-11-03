@@ -1,0 +1,41 @@
+name: Aiven - Sync Recent Supabase Data
+on:
+  workflow_dispatch:
+    inputs:
+      start_date:
+        description: First Singapore date to copy (inclusive)
+        default: '2026-10-20'
+        required: true
+      end_date:
+        description: Last Singapore date (inclusive); blank includes today
+        default: ''
+        required: false
+permissions:
+  contents: read
+concurrency:
+  group: aiven-ingestion
+  cancel-in-progress: false
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    env:
+      MIGRATION_SOURCE_DATABASE_URL: ${{ secrets.MIGRATION_SOURCE_DATABASE_URL }}
+      AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+      START_DATE: ${{ inputs.start_date }}
+      END_DATE: ${{ inputs.end_date }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Install database dependencies
+        run: pip install psycopg2-binary python-dotenv
+      - name: Copy, verify and refresh
+        shell: bash
+        run: |
+          set -euo pipefail
+          args=(--start "$START_DATE")
+          if [ -n "$END_DATE" ]; then args+=(--end "$END_DATE"); fi
+          python sync_supabase_to_aiven.py "${args[@]}"

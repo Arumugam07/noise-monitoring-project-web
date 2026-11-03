@@ -13,20 +13,20 @@ import sys
 from datetime import datetime, timedelta, date
 from calendar import monthrange
 import pandas as pd
-from supabase import create_client
+from database import create_client
 from dotenv import load_dotenv
 
 # Load environment variables
 load_dotenv()
 
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_ANON_KEY")
+AIVEN_DATABASE_URL = os.getenv("AIVEN_DATABASE_URL")
+AIVEN_CA_CERT = os.getenv("AIVEN_CA_CERT")
 
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("❌ ERROR: SUPABASE_URL and SUPABASE_ANON_KEY must be set")
+if not AIVEN_DATABASE_URL or not AIVEN_CA_CERT:
+    print("❌ ERROR: AIVEN_DATABASE_URL and AIVEN_CA_CERT must be set")
     sys.exit(1)
 
-supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+supabase = create_client(AIVEN_DATABASE_URL, AIVEN_CA_CERT)
 
 LOCATIONS = {
     "15490": "Singapore Sports School",
@@ -758,3 +758,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

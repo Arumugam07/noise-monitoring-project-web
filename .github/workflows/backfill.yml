@@ -1,26 +1,33 @@
 name: Backfill Noise Data
-on:
-  workflow_dispatch:
-
 jobs:
   backfill:
     runs-on: ubuntu-latest
     timeout-minutes: 360
-
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run Backfill
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          SUPABASE_TABLE: meter_readings
-        run: python supabase_backfill_all.py
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    - name: Run Backfill
+      env:
+        API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        DATABASE_TABLE: meter_readings
+      run: python supabase_backfill_all.py
+    - name: Refresh Aiven dashboard after ingestion
+      run: python refresh_mv.py
+      env:
+        AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+        AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+    if: github.event_name == 'workflow_dispatch' || vars.AIVEN_CUTOVER_ENABLED == 'true'
+    env:
+      AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: aiven-ingestion
+  cancel-in-progress: false

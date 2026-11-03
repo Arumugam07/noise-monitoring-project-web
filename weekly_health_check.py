@@ -14,9 +14,9 @@ import argparse
 import logging
 from datetime import datetime, timedelta, date
 import pandas as pd
-from supabase import create_client
+from database import create_client
 from dotenv import load_dotenv
-from supabase_common import LOCATIONS
+from supabase_common import LOCATIONS, SGT
 from telegram_alert import send_telegram_message
 
 # ==========================================================
@@ -34,8 +34,8 @@ logging.basicConfig(
 )
 log = logging.getLogger("weekly-health-check")
 
-SUPABASE_URL     = os.getenv("SUPABASE_URL")
-SUPABASE_KEY     = os.getenv("SUPABASE_ANON_KEY")
+AIVEN_DATABASE_URL     = os.getenv("AIVEN_DATABASE_URL")
+AIVEN_CA_CERT     = os.getenv("AIVEN_CA_CERT")
 TELEGRAM_TOKEN   = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
@@ -64,7 +64,7 @@ def fetch_mv_total_count(supabase) -> int:
 def fetch_mv_date_range(supabase):
     """Get the actual min/max Date in the MV so we know what's there."""
     try:
-        resp = supabase.rpc("get_mv_date_range", {}).execute()
+        resp = supabase.date_range()
         if resp.data:
             return resp.data[0].get("min_date"), resp.data[0].get("max_date")
     except Exception:
@@ -114,7 +114,7 @@ def fetch_date_range(supabase, start_date, end_date):
 
 
 def get_check_period() -> tuple[date, date]:
-    yesterday  = datetime.now().date() - timedelta(days=1)
+    yesterday  = datetime.now(SGT).date() - timedelta(days=1)
     start_date = yesterday - timedelta(days=6)
     return start_date, yesterday
 
@@ -164,9 +164,9 @@ def _send_mv_query_error_alert(start_date, end_date):
         f"📅 Period checked: {start_date} → {end_date}\n\n"
         f"Could not connect to or query <code>wide_view_mv</code>.\n\n"
         f"🔧 <b>Check:</b>\n"
-        f"• <code>SUPABASE_URL</code> secret is correct\n"
-        f"• <code>SUPABASE_ANON_KEY</code> secret is valid\n"
-        f"• Supabase project is online at supabase.com"
+        f"• <code>AIVEN_DATABASE_URL</code> secret is correct\n"
+        f"• <code>AIVEN_CA_CERT</code> secret is valid\n"
+        f"• Aiven PostgreSQL service is running"
     )
     log.error("MV query returned error — sending connectivity alert")
     _telegram(msg)
@@ -488,7 +488,7 @@ def _validate_and_fetch(supabase, start_date, end_date):
 def main():
     log.info("Running weekly sensor health check")
     start_date, end_date = get_check_period()
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supabase = create_client(AIVEN_DATABASE_URL, AIVEN_CA_CERT)
 
     df, ok = _validate_and_fetch(supabase, start_date, end_date)
     if not ok:
@@ -505,7 +505,7 @@ def main():
 def run_consecutive_check():
     log.info("Running consecutive critical sensor check")
     start_date, end_date = get_check_period()
-    supabase = create_client(SUPABASE_URL, SUPABASE_KEY)
+    supabase = create_client(AIVEN_DATABASE_URL, AIVEN_CA_CERT)
 
     df, ok = _validate_and_fetch(supabase, start_date, end_date)
     if not ok:
@@ -538,3 +538,4 @@ if __name__ == "__main__":
         run_consecutive_check()
     else:
         main()
+

@@ -7,7 +7,7 @@ import os
 import time
 import logging
 from dotenv import load_dotenv
-from supabase import create_client
+from database import create_client
 from typing import List, Dict
 from supabase_common import API_DEFAULT, LOCATIONS, build_rows, upsert_rows, yesterday_sgt
 from datetime import datetime, timedelta
@@ -20,14 +20,14 @@ def main():
     load_dotenv()
 
     api_base = os.getenv("API_BASE_URL", API_DEFAULT).rstrip("/")
-    table = os.getenv("SUPABASE_TABLE", "meter_readings")
+    table = os.getenv("DATABASE_TABLE", "meter_readings")
 
     try:
-        supabase_url = os.environ["SUPABASE_URL"]
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"]
+        supabase_url = os.environ["AIVEN_DATABASE_URL"]
+        supabase_key = os.environ["AIVEN_CA_CERT"]
     except KeyError as e:
         log.error(f"Missing environment variable: {e}")
-        return
+        raise
 
     supabase = create_client(supabase_url, supabase_key)
     day = yesterday_sgt()
@@ -38,6 +38,7 @@ def main():
     log.info(f"Locations: {len(LOCATIONS)}")
     log.info("=" * 70)
 
+    failures = []
     day_rows: List[Dict[str, object]] = []
 
     # Per-location fetch with error handling — same as backfill
@@ -55,6 +56,7 @@ def main():
 
         except Exception as e:
             log.error(f"  ✗ {loc['Name'][:30]:30s} - Error: {e}")
+            failures.append(str(e))
             continue  # skip this location, keep going
 
     # Upsert all collected rows
@@ -65,6 +67,12 @@ def main():
         log.info("=" * 70)
     except Exception as e:
         log.error(f"✗ Database upsert failed: {e}")
+        failures.append(str(e))
+
+    if failures:
+        raise RuntimeError(f"ETL had {len(failures)} failed fetches or writes; see logs.")
+
 
 if __name__ == "__main__":
     main()
+

@@ -1,26 +1,11 @@
 #!/usr/bin/env python3
 """
-etl/compute_monthly_summary.py
--------------------------------
-Pre-compute monthly persisted noise summaries for every location and
-write them into the Supabase `monthly_persisted_summary` table.
- 
-Designed to run on a schedule via GitHub Actions (see
-.github/workflows/monthly_summary.yml).
- 
-Key behaviour:
-  - Incremental: skips months that are already computed and are in the past.
-  - Always recomputes the current month (data is still coming in).
-  - Uses SUPABASE_SERVICE_KEY (service role) so it can write to the table
-    despite RLS policies. The Streamlit app uses SUPABASE_ANON_KEY (read-only).
- 
-Usage:
-  python etl/compute_monthly_summary.py
- 
-Required env vars (set in GitHub Secrets or .env):
-  SUPABASE_URL          – your project URL
-  SUPABASE_SERVICE_KEY  – service role key (NOT the anon key)
-  SUPABASE_WIDE_VIEW    – (optional) defaults to wide_view_mv
+Compute monthly persisted noise summaries using direct Aiven PostgreSQL queries.
+
+Requires AIVEN_DATABASE_URL and AIVEN_CA_CERT. The database user must own
+or have write access to monthly_persisted_summary and its identity sequence.
+DATABASE_WIDE_VIEW defaults to wide_view_mv. Noise detection rules and
+location presets are unchanged by the database migration.
 """
  
 import os
@@ -29,7 +14,7 @@ import calendar
 from datetime import date
  
 import pandas as pd
-from supabase import create_client
+from database import create_client
 from dotenv import load_dotenv
  
 # ── Allow running from repo root or from etl/ sub-directory ──────────────────
@@ -38,9 +23,9 @@ from location_presets import LOCATION_PRESETS
  
 load_dotenv()
  
-SUPABASE_URL  = os.getenv("SUPABASE_URL")
-SUPABASE_KEY  = os.getenv("SUPABASE_SERVICE_KEY")   # service role — needed for writes
-VIEW_NAME     = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
+AIVEN_DATABASE_URL  = os.getenv("AIVEN_DATABASE_URL")
+AIVEN_CA_CERT  = os.getenv("AIVEN_CA_CERT")   # TLS CA certificate
+VIEW_NAME     = os.getenv("DATABASE_WIDE_VIEW", "wide_view_mv")
 SUMMARY_TABLE = "monthly_persisted_summary"
  
 # Data starts May 2025
@@ -48,13 +33,13 @@ DATA_START_YEAR  = 2025
 DATA_START_MONTH = 5
  
  
-# ── Supabase helpers ──────────────────────────────────────────────────────────
+# ── Database helpers ──────────────────────────────────────────────────────────
  
 def get_client():
-    if not SUPABASE_URL or not SUPABASE_KEY:
-        print("ERROR: SUPABASE_URL and SUPABASE_SERVICE_KEY must be set.")
+    if not AIVEN_DATABASE_URL or not AIVEN_CA_CERT:
+        print("ERROR: AIVEN_DATABASE_URL and AIVEN_CA_CERT must be set.")
         sys.exit(1)
-    return create_client(SUPABASE_URL, SUPABASE_KEY)
+    return create_client(AIVEN_DATABASE_URL, AIVEN_CA_CERT)
  
  
 def already_computed(client, location_id: str, year: int, month: int,
@@ -193,6 +178,7 @@ def main() -> None:
  
     total = len(LOCATION_PRESETS) * len(months)
     done  = 0
+    failures = []
  
     print(f"Starting ETL — {len(LOCATION_PRESETS)} locations × {len(months)} months "
           f"= {total} jobs\n")
@@ -221,9 +207,13 @@ def main() -> None:
                 print(f" ✓  {len(incidents)} incidents")
             except Exception as exc:
                 print(f" ERROR: {exc}")
+                failures.append(str(exc))
  
+    if failures:
+        raise RuntimeError(f"{len(failures)} monthly summary jobs failed")
     print("\n✅ ETL complete.")
  
  
 if __name__ == "__main__":
     main()
+

@@ -14,7 +14,7 @@ from datetime import date, datetime, timedelta
 
 import pandas as pd
 import streamlit as st
-from supabase import create_client
+from database import create_client
 from dotenv import load_dotenv
 from yearly_analysis_tab import show_yearly_analysis_tab
 from location_presets import LOCATION_PRESETS
@@ -36,7 +36,7 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
+DEFAULT_VIEW = os.getenv("DATABASE_WIDE_VIEW", "wide_view_mv")
 READINGS_PER_DAY = 1440  # 60 min/hour * 24 hours
 REPORTING_DAY_START_HOUR = 7
 # Adjusted thresholds for real-world data with gaps
@@ -273,19 +273,9 @@ def render_persisted_noise_incidents(df, location_cols, min_db, max_db, duration
 
 @st.cache_resource(ttl=300)
 def get_client():
-    """Create Supabase client from env or Streamlit secrets."""
+    """Read Aiven settings from environment or Streamlit secrets."""
     load_dotenv()
-
-    url = os.getenv("SUPABASE_URL") or st.secrets.get("SUPABASE_URL")
-    key = os.getenv("SUPABASE_ANON_KEY") or st.secrets.get("SUPABASE_ANON_KEY")
-
-    if not url or not key:
-        raise RuntimeError(
-            "SUPABASE_URL or SUPABASE_ANON_KEY not set. "
-            "Set them as environment variables or in .streamlit/secrets.toml."
-        )
-
-    return create_client(url, key)
+    return create_client()
 
 @st.cache_data(ttl=300)
 def fetch_all_data(start_date=None,
@@ -1020,48 +1010,15 @@ def main():
 
             with st.expander("🔧 Setup Instructions", expanded=True):
                 st.markdown("""
-                **The database might not be configured yet, or credentials are missing.**
+                **Check your Aiven connection settings.**
 
-                ### Setup Steps:
+                In Streamlit Community Cloud → App settings → Secrets, set:
+                - `AIVEN_DATABASE_URL`: PostgreSQL URI for the dashboard user.
+                - `AIVEN_CA_CERT`: The full Aiven CA certificate, in a multiline string.
+                - `APP_USERNAME` and `APP_PASSWORD`: Your existing dashboard login.
 
-                1. **Create the materialized view** in your Supabase SQL Editor:
-
-                ```sql
-                DROP MATERIALIZED VIEW IF EXISTS public.wide_view_mv;
-
-                CREATE MATERIALIZED VIEW public.wide_view_mv AS
-                SELECT
-                  (reading_datetime AT TIME ZONE 'Asia/Singapore')::date as "Date",
-                  DATE_TRUNC('minute', reading_datetime AT TIME ZONE 'Asia/Singapore')::time as "Time",
-                  MAX(CASE WHEN location_id = '15490' THEN reading_value END) as "15490",
-                  MAX(CASE WHEN location_id = '16034' THEN reading_value END) as "16034",
-                  MAX(CASE WHEN location_id = '16041' THEN reading_value END) as "16041",
-                  MAX(CASE WHEN location_id = '14542' THEN reading_value END) as "14542",
-                  MAX(CASE WHEN location_id = '15725' THEN reading_value END) as "15725",
-                  MAX(CASE WHEN location_id = '16032' THEN reading_value END) as "16032",
-                  MAX(CASE WHEN location_id = '16045' THEN reading_value END) as "16045",
-                  MAX(CASE WHEN location_id = '15820' THEN reading_value END) as "15820",
-                  MAX(CASE WHEN location_id = '15821' THEN reading_value END) as "15821",
-                  MAX(CASE WHEN location_id = '15999' THEN reading_value END) as "15999",
-                  MAX(CASE WHEN location_id IN ('16026', '16367') THEN reading_value END) as "16026",
-                  MAX(CASE WHEN location_id = '16004' THEN reading_value END) as "16004",
-                  MAX(CASE WHEN location_id = '16005' THEN reading_value END) as "16005"
-                FROM public.meter_readings
-                GROUP BY (reading_datetime AT TIME ZONE 'Asia/Singapore')::date,
-                         DATE_TRUNC('minute', reading_datetime AT TIME ZONE 'Asia/Singapore')::time;
-
-                CREATE INDEX idx_wide_view_date ON public.wide_view_mv ("Date");
-
-                REFRESH MATERIALIZED VIEW public.wide_view_mv;
-                ```
-
-                2. **Set environment variables** or Streamlit secrets:
-                   - `SUPABASE_URL`: Your Supabase project URL
-                   - `SUPABASE_ANON_KEY`: Your Supabase anonymous key
-                   - `APP_USERNAME`: Login username (default: admin)
-                   - `APP_PASSWORD`: Login password (default: changeme)
-
-                3. **Refresh** this page after configuration
+                The `public.wide_view_mv` view must exist and be populated.
+                Use the Aiven dashboard refresh workflow if it needs refreshing.
                 """)
 
             st.error(f"**Technical Error:** {str(e)}")
@@ -1074,3 +1031,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

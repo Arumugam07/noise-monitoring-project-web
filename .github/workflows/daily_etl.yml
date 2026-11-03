@@ -1,45 +1,40 @@
 name: Daily Noise Data ETL
-
-on:
-  schedule:
-    - cron: '0 0 * * *'   # 00:00 UTC = 08:00 SGT
-  workflow_dispatch:
-
 jobs:
   daily-etl:
     runs-on: ubuntu-latest
     timeout-minutes: 30
-
     steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.11'
-
-      - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      # ── Step 1: Backfill yesterday (complete day, all 1440 readings) ──────────
-      - name: Run Daily ETL (complete previous day)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          SUPABASE_TABLE: meter_readings
-        run: python supabase_daily.py
-
-      # ── Step 2: Catch any late-arriving data for today ────────────────────────
-      - name: Run Today's ETL (catch late data)
-        env:
-          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-          SUPABASE_ANON_KEY: ${{ secrets.SUPABASE_ANON_KEY }}
-          SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
-          API_BASE_URL: ${{ secrets.API_BASE_URL }}
-          SUPABASE_TABLE: meter_readings
-        run: python supabase_today.py
-
-      # MV refresh is handled by Supabase pg_cron (job: refresh-wide-view-hourly)
-      # running REFRESH MATERIALIZED VIEW CONCURRENTLY at :20 past every hour.
-      # No GitHub Actions step needed — dashboard will reflect new data within 80 min.
+    - uses: actions/checkout@v4
+    - uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install dependencies
+      run: pip install -r requirements.txt
+    - name: Run Daily ETL (complete previous day)
+      env:
+        API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        DATABASE_TABLE: meter_readings
+      run: python supabase_daily.py
+    - name: Run Today's ETL (catch late data)
+      env:
+        API_BASE_URL: ${{ secrets.API_BASE_URL }}
+        DATABASE_TABLE: meter_readings
+      run: python supabase_today.py
+    - name: Refresh Aiven dashboard after ingestion
+      run: python refresh_mv.py
+      env:
+        AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+        AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+    if: github.event_name == 'workflow_dispatch' || vars.AIVEN_CUTOVER_ENABLED == 'true'
+    env:
+      AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
+'on':
+  schedule:
+  - cron: 0 0 * * *
+  workflow_dispatch: null
+permissions:
+  contents: read
+concurrency:
+  group: aiven-ingestion
+  cancel-in-progress: false

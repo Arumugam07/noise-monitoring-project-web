@@ -5,13 +5,10 @@ Assembles everything in memory, then writes one Excel with monthly tabs.
 """
 import os
 import time
-import requests
+from database import create_client
 import pandas as pd
 from datetime import date, timedelta
 from calendar import monthrange
-
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://tgznxzfdlxhxqwpohhyl.supabase.co")
-SUPABASE_KEY = os.environ["SUPABASE_KEY"]
 
 TABLE       = "meter_readings"
 OUTPUT_FILE = "noise_1_apr_2025_to_31_may_2026.xlsx"
@@ -38,65 +35,16 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-HEADERS = {
-    "apikey":        SUPABASE_KEY,
-    "Authorization": f"Bearer {SUPABASE_KEY}",
-}
-
-
 def fetch_location_month(location_id, year, month):
-    last_day = monthrange(year, month)[1]
-    date_from = f"{year:04d}-{month:02d}-01T00:00:00+08:00"
-    date_to   = f"{year:04d}-{month:02d}-{last_day:02d}T23:59:59+08:00"
-
-    all_rows = []
-    offset   = 0
-
-    while True:
-        resp = requests.get(
-            f"{SUPABASE_URL}/rest/v1/{TABLE}",
-            headers={**HEADERS, "Prefer": "count=exact"},
-            params=[
-                ("select",           "reading_datetime,reading_value"),
-                ("location_id",      f"eq.{location_id}"),
-                ("reading_datetime", f"gte.{date_from}"),
-                ("reading_datetime", f"lte.{date_to}"),
-                ("order",            "reading_datetime.asc"),
-                ("limit",            PAGE_SIZE),
-                ("offset",           offset),
-            ],
-            timeout=60,
-        )
-
-        if resp.status_code >= 400:
-            print(f"    ERROR {resp.status_code}: {resp.text[:200]}")
-            break
-
-        rows = resp.json()
-        all_rows.extend(rows)
-
-        content_range = resp.headers.get("Content-Range", "")
-        # format: "start-end/total"
-        total = None
-        if "/" in content_range:
-            total_part = content_range.split("/")[-1]
-            if total_part.isdigit():
-                total = int(total_part)
-
-        offset += len(rows)
-
-        # stop when we've genuinely reached the end
-        if len(rows) == 0:
-            break
-        if total is not None and offset >= total:
-            break
-        if len(rows) < PAGE_SIZE and total is None:
-            # fallback if count isn't available for some reason
-            break
-
-        time.sleep(0.05)
-
-    return all_rows
+    first = date(year, month, 1)
+    following = (first.replace(day=28) + timedelta(days=4)).replace(day=1)
+    response = (create_client().table(TABLE)
+                .select("reading_datetime,reading_value")
+                .eq("location_id", location_id)
+                .gte("reading_datetime", f"{first}T00:00:00+08:00")
+                .lt("reading_datetime", f"{following}T00:00:00+08:00")
+                .order("reading_datetime").execute())
+    return response.data
 
 
 def build_month_dataframe(year, month):
@@ -218,3 +166,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
