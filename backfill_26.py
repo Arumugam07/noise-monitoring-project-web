@@ -9,7 +9,7 @@ duplicates.
 
 Config via environment variables (with defaults):
 - BACKFILL_START_DATE (default 2026-01-01)
-- SUPABASE_URL, SUPABASE_ANON_KEY, SUPABASE_SERVICE_KEY, API_BASE_URL, SUPABASE_TABLE
+- AIVEN_DATABASE_URL, AIVEN_CA_CERT, API_BASE_URL, DATABASE_TABLE
 """
 
 import os
@@ -17,7 +17,7 @@ import time
 import logging
 from datetime import timedelta, date
 from dotenv import load_dotenv
-from supabase import create_client
+from database import create_client
 from supabase_common import API_DEFAULT, LOCATIONS, build_rows, upsert_rows, yesterday_sgt
 
 logging.basicConfig(
@@ -31,15 +31,15 @@ def main():
     load_dotenv()
 
     api_base = os.getenv("API_BASE_URL", API_DEFAULT).rstrip("/")
-    table = os.getenv("SUPABASE_TABLE", "meter_readings")
+    table = os.getenv("DATABASE_TABLE", "meter_readings")
 
     try:
-        supabase_url = os.environ["SUPABASE_URL"]
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"]
+        supabase_url = os.environ["AIVEN_DATABASE_URL"]
+        supabase_key = os.environ["AIVEN_CA_CERT"]
     except KeyError as e:
         log.error(f"Missing environment variable: {e}")
-        log.error("Please set SUPABASE_URL and SUPABASE_ANON_KEY in your .env file")
-        return
+        log.error("Please set AIVEN_DATABASE_URL and AIVEN_CA_CERT in your .env file")
+        raise
 
     supabase = create_client(supabase_url, supabase_key)
 
@@ -54,6 +54,7 @@ def main():
     log.info(f"Locations: {len(LOCATIONS)}")
     log.info("=" * 70)
 
+    failures = []
     total_affected = 0
     days_processed = 0
     days_with_data = 0
@@ -81,6 +82,7 @@ def main():
 
             except Exception as e:
                 log.error(f"  ✗ {loc['Name'][:30]:30s} - Error: {e}")
+                failures.append(str(e))
                 continue
 
         try:
@@ -96,6 +98,7 @@ def main():
 
         except Exception as e:
             log.error(f"  ✗ Database error: {e}")
+            failures.append(str(e))
 
         current_date = current_date - timedelta(days=1)
 
@@ -119,5 +122,10 @@ def main():
     log.info("=" * 70)
 
 
+    if failures:
+        raise RuntimeError(f"ETL had {len(failures)} failed fetches or writes; see logs.")
+
+
 if __name__ == "__main__":
     main()
+

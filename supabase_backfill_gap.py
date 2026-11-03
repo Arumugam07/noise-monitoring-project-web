@@ -19,7 +19,7 @@ import logging
 import argparse
 from datetime import datetime, timedelta, date
 from dotenv import load_dotenv
-from supabase import create_client
+from database import create_client
 from supabase_common import API_DEFAULT, LOCATIONS, build_rows, upsert_rows, SGT, yesterday_sgt
 
 logging.basicConfig(
@@ -54,14 +54,14 @@ def get_missing_dates(supabase, start_date: date, end_date: date) -> list[date]:
     missing = []
     current = start_date
     while current <= end_date:
-        start_str = f"{current.isoformat()}T00:00:00+00:00"
-        end_str   = f"{current.isoformat()}T23:59:59+00:00"
+        start_str = f"{current.isoformat()}T00:00:00+08:00"
+        end_str   = f"{(current + timedelta(days=1)).isoformat()}T00:00:00+08:00"
         try:
             resp = (
                 supabase.table("meter_readings")
                 .select("reading_datetime", count="exact")
                 .gte("reading_datetime", start_str)
-                .lte("reading_datetime", end_str)
+                .lt("reading_datetime", end_str)
                 .limit(1)
                 .execute()
             )
@@ -81,6 +81,7 @@ def get_missing_dates(supabase, start_date: date, end_date: date) -> list[date]:
 def run_gap_backfill(api_base: str, supabase, table: str,
                      dates_to_fill: list[date]) -> int:
     """Fetch and upsert data for each missing date. Returns total rows inserted."""
+    failures = []
     total_affected = 0
     total_dates    = len(dates_to_fill)
 
@@ -99,6 +100,7 @@ def run_gap_backfill(api_base: str, supabase, table: str,
                 time.sleep(0.05)
             except Exception as e:
                 log.error(f"  ✗ {loc['Name'][:30]:30s} — Error: {e}")
+                failures.append(str(e))
 
         try:
             affected = upsert_rows(supabase, table, day_rows)
@@ -106,7 +108,10 @@ def run_gap_backfill(api_base: str, supabase, table: str,
             log.info(f"  ✅ Upserted {affected:,} rows for {day}")
         except Exception as e:
             log.error(f"  ✗ Database upsert failed for {day}: {e}")
+            failures.append(str(e))
 
+    if failures:
+        raise RuntimeError(f"Gap backfill had {len(failures)} fetch/write failures")
     return total_affected
 
 
@@ -118,14 +123,16 @@ def main():
     parser.add_argument("--end",   help="End date YYYY-MM-DD (default: yesterday)")
     parser.add_argument("--check-only", action="store_true",
                         help="Only print missing dates, do not fetch data")
+    parser.add_argument("--force", action="store_true",
+                        help="Re-fetch every requested day, including partially populated days")
     args = parser.parse_args()
 
     api_base = os.getenv("API_BASE_URL", API_DEFAULT).rstrip("/")
-    table    = os.getenv("SUPABASE_TABLE", "meter_readings")
+    table    = os.getenv("DATABASE_TABLE", "meter_readings")
 
     try:
-        supabase_url = os.environ["SUPABASE_URL"]
-        supabase_key = os.getenv("SUPABASE_SERVICE_KEY") or os.environ["SUPABASE_ANON_KEY"]
+        supabase_url = os.environ["AIVEN_DATABASE_URL"]
+        supabase_key = os.environ["AIVEN_CA_CERT"]
     except KeyError as e:
         log.error(f"Missing environment variable: {e}")
         sys.exit(1)
@@ -162,12 +169,15 @@ def main():
     log.info("=" * 70)
 
     log.info("\n🔍 Checking which dates need backfilling...")
-    missing_dates = get_missing_dates(supabase, start_date, end_date)
+    missing_dates = (
+        [start_date + timedelta(days=i) for i in range(total_days)]
+        if args.force else get_missing_dates(supabase, start_date, end_date)
+    )
 
     log.info(f"\n📋 Summary: {len(missing_dates)}/{total_days} dates need backfilling")
 
     if not missing_dates:
-        log.info("✅ No missing dates found. Database is up to date.")
+        log.info("No completely empty dates found. Partial days may still have gaps; use --force to re-fetch them.")
         sys.exit(0)
 
     log.info("Missing dates:")
@@ -194,3 +204,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

@@ -18,7 +18,7 @@ from datetime import date as DateType
 
 import pandas as pd
 import streamlit as st
-from supabase import create_client
+from database import create_client
 from dotenv import load_dotenv
 
 
@@ -39,36 +39,21 @@ LOCATION_ID_TO_NAME = {
     "16005": "Woodlands 11",
 }
 
-DEFAULT_VIEW = os.getenv("SUPABASE_WIDE_VIEW", "wide_view_mv")
+DEFAULT_VIEW = os.getenv("DATABASE_WIDE_VIEW", "wide_view_mv")
 PAGE_SIZE = 200
 
 
 def get_client():
     load_dotenv()
-    url = os.environ["SUPABASE_URL"]
-    key = os.environ["SUPABASE_ANON_KEY"]
-    return create_client(url, key)
+    return create_client()
 
 
 def fetch_page(page: int, page_size: int) -> pd.DataFrame:
-    supabase = get_client()
     offset = page * page_size
-    # Try RPC for raw SQL first; fallback to simple select
-    try:
-        resp = supabase.postgrest.rpc(
-            "exec_sql",
-            {
-                "sql": f"SELECT * FROM public.{DEFAULT_VIEW} ORDER BY \"Date\", \"Time\" OFFSET {offset} LIMIT {page_size}"
-            },
-        ).execute()
-        rows = resp.data or []
-        return pd.DataFrame(rows)
-    except Exception:
-        resp = supabase.table(DEFAULT_VIEW).select("*").execute()
-        df = pd.DataFrame(resp.data or [])
-        if df.empty:
-            return df
-        return df.sort_values(["Date", "Time"]).iloc[offset: offset + page_size]
+    response = (get_client().table(DEFAULT_VIEW).select("*")
+                .order("Date").order("Time")
+                .range(offset, offset + page_size - 1).execute())
+    return pd.DataFrame(response.data)
 
 
 def filter_frame(
@@ -387,6 +372,7 @@ def main():
 
 if __name__ == "__main__":
     main()
+
 
 
 

@@ -43,7 +43,7 @@ from datetime import datetime, timedelta, date, timezone
 from typing import List, Dict
 
 import requests
-from supabase import Client
+from database import DatabaseClient as Client
 
 try:
     import zoneinfo  # py3.9+
@@ -365,3 +365,4 @@ def upsert_rows(supabase: Client, table: str, rows: List[Dict[str, object]]) -> 
 def yesterday_sgt() -> date:
     """Return yesterday's date in Singapore local time (SGT)."""
     return datetime.now(SGT).date() - timedelta(days=1)
+

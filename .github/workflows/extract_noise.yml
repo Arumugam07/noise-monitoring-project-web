@@ -1,37 +1,33 @@
 name: Extract Noise Excel Apr2025-May2026
-
-on:
-  workflow_dispatch:
-
 jobs:
   extract-noise:
     runs-on: ubuntu-latest
-    timeout-minutes: 120     # 14 months × 13 sensors = 182 fetches; ~30-60 min expected
-
+    timeout-minutes: 120
     env:
-      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
-
+      AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.11'
+    - name: Install Python packages
+      run: 'pip install psycopg2-binary requests pandas xlsxwriter openpyxl
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install Python packages
-        run: |
-          pip install requests pandas xlsxwriter openpyxl
-
-      - name: Run export
-        run: python extract_noise.py
-
-      - name: Upload Excel file
-        uses: actions/upload-artifact@v4
-        with:
-          name: noise-1-apr-2025-to-31-may-2026
-          path: "noise_1_apr_2025_to_31_may_2026.xlsx"
-          if-no-files-found: error
-          retention-days: 30
+        '
+    - name: Run export
+      run: python extract_noise.py
+    - name: Upload Excel file
+      uses: actions/upload-artifact@v4
+      with:
+        name: noise-1-apr-2025-to-31-may-2026
+        path: noise_1_apr_2025_to_31_may_2026.xlsx
+        if-no-files-found: error
+        retention-days: 30
+    if: github.event_name == 'workflow_dispatch' || vars.AIVEN_CUTOVER_ENABLED == 'true'
+'on':
+  workflow_dispatch: null
+permissions:
+  contents: read

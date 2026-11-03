@@ -1,7 +1,6 @@
 streamlit
 pandas
 altair
-supabase
 python-dotenv
 openpyxl
 requests
@@ -10,3 +9,4 @@ playwright
 psycopg2-binary
 xlsxwriter
 pytz 
+
