@@ -1,10 +1,7 @@
 import csv
-
 from database import connection
 
-
 OUTPUT_FILE = "Oct_2026.csv"
-
 
 QUERY = """
 WITH minutes AS (
@@ -155,34 +152,31 @@ ORDER BY m.local_minute;
 
 def export_october():
     with connection() as conn:
-        with conn.cursor(name="october_export") as cur:
-            cur.itersize = 5000
+        with conn.cursor() as cur:
             cur.execute(QUERY)
 
-            headers = [column.name for column in cur.description]
+            if cur.description is None:
+                raise RuntimeError("Query did not return any result set.")
+
+            headers = [desc[0] for desc in cur.description]
+
             row_count = 0
-
-            with open(
-                OUTPUT_FILE,
-                "w",
-                newline="",
-                encoding="utf-8-sig"
-            ) as file:
-
-                writer = csv.writer(file)
+            with open(OUTPUT_FILE, "w", newline="", encoding="utf-8-sig") as f:
+                writer = csv.writer(f)
                 writer.writerow(headers)
 
-                for row in cur:
-                    writer.writerow(row)
-                    row_count += 1
+                while True:
+                    rows = cur.fetchmany(5000)
+                    if not rows:
+                        break
+                    writer.writerows(rows)
+                    row_count += len(rows)
 
     print(f"Export completed: {OUTPUT_FILE}")
     print(f"Rows exported: {row_count}")
 
     if row_count != 44640:
-        raise RuntimeError(
-            f"Expected 44,640 rows but exported {row_count}"
-        )
+        raise RuntimeError(f"Expected 44640 rows but got {row_count}")
 
     print("SUCCESS: Full October 2026 dataset exported.")
 
