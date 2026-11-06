@@ -1,159 +1,59 @@
-import psycopg2
-import pandas as pd
+name: Aiven - Export October 2026
 
-AIVEN_DATABASE_URL = "YOUR_AIVEN_DATABASE_URL"
+on:
+  workflow_dispatch:
 
-query = """
-WITH minutes AS (
-    SELECT generate_series(
-        TIMESTAMP '2026-10-01 00:00:00',
-        TIMESTAMP '2026-10-31 23:59:00',
-        INTERVAL '1 minute'
-    ) AS local_minute
-),
+permissions:
+  contents: read
 
-readings AS (
-    SELECT
-        DATE_TRUNC(
-            'minute',
-            reading_datetime AT TIME ZONE 'Asia/Singapore'
-        ) AS local_minute,
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
 
-        CASE
-            WHEN location_name ILIKE '%Tengah Garden%'
-                THEN 'BLK 132B Tengah Garden Avenue'
-            ELSE location_name
-        END AS location_name,
+    env:
+      AIVEN_DATABASE_URL: ${{ secrets.AIVEN_DATABASE_URL }}
+      AIVEN_CA_CERT: ${{ secrets.AIVEN_CA_CERT }}
 
-        reading_value
-    FROM meter_readings
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-    WHERE reading_datetime >=
-        TIMESTAMP '2026-10-01 00:00:00'
-        AT TIME ZONE 'Asia/Singapore'
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      AND reading_datetime <
-        TIMESTAMP '2026-11-01 00:00:00'
-        AT TIME ZONE 'Asia/Singapore'
-),
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install psycopg2-binary python-dotenv
 
-pivoted AS (
-    SELECT
-        local_minute,
+      - name: Export October 2026
+        run: python Oct26.py
 
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'Singapore Sports School'
-        ) AS "Singapore Sports School",
+      - name: Verify export file
+        shell: bash
+        run: |
+          set -euo pipefail
 
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 120 Serangoon North Ave 1'
-        ) AS "BLK 120 Serangoon North Ave 1",
+          if [ ! -f "Oct_2026.csv" ]; then
+            echo "ERROR: Oct_2026.csv was not created."
+            exit 1
+          fi
 
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 838 Hougang Central'
-        ) AS "BLK 838 Hougang Central",
+          lines=$(wc -l < Oct_2026.csv)
+          echo "Total CSV lines: $lines"
 
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 558 Jurong West Street 42'
-        ) AS "BLK 558 Jurong West Street 42",
+          if [ "$lines" -ne 44641 ]; then
+            echo "ERROR: Expected 44,641 total lines."
+            exit 1
+          fi
 
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'Jurong Safra, Block C'
-        ) AS "Jurong Safra, Block C",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'AMA KENG SITE'
-        ) AS "AMA KENG SITE",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 19 Balam Road'
-        ) AS "BLK 19 Balam Road",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'Norcom II Tower 4'
-        ) AS "Norcom II Tower 4",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'Blk 444 Choa Chu Kang Avenue 4'
-        ) AS "Blk 444 Choa Chu Kang Avenue 4",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 654B Punggol Drive'
-        ) AS "BLK 654B Punggol Drive",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 132B Tengah Garden Avenue'
-        ) AS "BLK 132B Tengah Garden Avenue",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 206A Punggol Place'
-        ) AS "BLK 206A Punggol Place",
-
-        MAX(reading_value) FILTER (
-            WHERE location_name = 'Woodlands 11'
-        ) AS "Woodlands 11"
-
-    FROM readings
-    GROUP BY local_minute
-)
-
-SELECT
-    TO_CHAR(m.local_minute, 'DD MON YY') AS "Date",
-    TO_CHAR(m.local_minute, 'HH24:MI') AS "Time",
-
-    ROUND(p."Singapore Sports School"::numeric, 1)
-        AS "Singapore Sports School",
-
-    ROUND(p."BLK 120 Serangoon North Ave 1"::numeric, 1)
-        AS "BLK 120 Serangoon North Ave 1",
-
-    ROUND(p."BLK 838 Hougang Central"::numeric, 1)
-        AS "BLK 838 Hougang Central",
-
-    ROUND(p."BLK 558 Jurong West Street 42"::numeric, 1)
-        AS "BLK 558 Jurong West Street 42",
-
-    ROUND(p."Jurong Safra, Block C"::numeric, 1)
-        AS "Jurong Safra, Block C",
-
-    ROUND(p."AMA KENG SITE"::numeric, 1)
-        AS "AMA KENG SITE",
-
-    ROUND(p."BLK 19 Balam Road"::numeric, 1)
-        AS "BLK 19 Balam Road",
-
-    ROUND(p."Norcom II Tower 4"::numeric, 1)
-        AS "Norcom II Tower 4",
-
-    ROUND(p."Blk 444 Choa Chu Kang Avenue 4"::numeric, 1)
-        AS "Blk 444 Choa Chu Kang Avenue 4",
-
-    ROUND(p."BLK 654B Punggol Drive"::numeric, 1)
-        AS "BLK 654B Punggol Drive",
-
-    ROUND(p."BLK 132B Tengah Garden Avenue"::numeric, 1)
-        AS "BLK 132B Tengah Garden Avenue",
-
-    ROUND(p."BLK 206A Punggol Place"::numeric, 1)
-        AS "BLK 206A Punggol Place",
-
-    ROUND(p."Woodlands 11"::numeric, 1)
-        AS "Woodlands 11"
-
-FROM minutes m
-
-LEFT JOIN pivoted p
-    ON p.local_minute = m.local_minute
-
-ORDER BY m.local_minute;
-"""
-
-conn = psycopg2.connect(AIVEN_DATABASE_URL)
-
-df = pd.read_sql(query, conn)
-
-df.to_csv("Oct_2026.csv", index=False)
-
-print("Rows exported:", len(df))
-
-conn.close()
+      - name: Upload October CSV
+        uses: actions/upload-artifact@v4
+        with:
+          name: Oct_2026_Noise_Data
+          path: Oct_2026.csv
+          if-no-files-found: error
+          retention-days: 30
