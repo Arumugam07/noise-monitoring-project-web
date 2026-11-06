@@ -31,7 +31,7 @@ jobs:
 
       - name: Export October 2026
         run: |
-          python export_october_2026.py
+          python Oct26.py
 
       - name: Verify export file
         shell: bash
