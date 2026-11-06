@@ -20,10 +20,24 @@ readings AS (
         ) AS local_minute,
 
         CASE
+            /* Sensor 16032 was at AMA KENG before 23 Oct 2026 */
+            WHEN location_id = '16032'
+             AND (reading_datetime AT TIME ZONE 'Asia/Singapore')
+                    < TIMESTAMP '2026-10-23 00:00:00'
+                THEN 'AMA KENG SITE'
+
+            /* From 23 Oct 2026, sensor 16032 moved to Tengah */
+            WHEN location_id = '16032'
+             AND (reading_datetime AT TIME ZONE 'Asia/Singapore')
+                    >= TIMESTAMP '2026-10-23 00:00:00'
+                THEN 'BLK 132B Tengah Garden Avenue'
+
+            /* Keep old/temp Tengah IDs/names consolidated */
             WHEN location_name ILIKE '%Tengah Garden%'
                 THEN 'BLK 132B Tengah Garden Avenue'
+
             ELSE location_name
-        END AS location_name,
+        END AS export_location,
 
         reading_value
 
@@ -43,55 +57,55 @@ pivoted AS (
         local_minute,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'Singapore Sports School'
+            WHERE export_location = 'Singapore Sports School'
         ) AS singapore_sports_school,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 120 Serangoon North Ave 1'
+            WHERE export_location = 'BLK 120 Serangoon North Ave 1'
         ) AS serangoon_north,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 838 Hougang Central'
+            WHERE export_location = 'BLK 838 Hougang Central'
         ) AS hougang_central,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 558 Jurong West Street 42'
+            WHERE export_location = 'BLK 558 Jurong West Street 42'
         ) AS jurong_west,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'Jurong Safra, Block C'
+            WHERE export_location = 'Jurong Safra, Block C'
         ) AS jurong_safra,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'AMA KENG SITE'
+            WHERE export_location = 'AMA KENG SITE'
         ) AS ama_keng,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 19 Balam Road'
+            WHERE export_location = 'BLK 19 Balam Road'
         ) AS balam_road,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'Norcom II Tower 4'
+            WHERE export_location = 'Norcom II Tower 4'
         ) AS norcom,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'Blk 444 Choa Chu Kang Avenue 4'
+            WHERE export_location = 'Blk 444 Choa Chu Kang Avenue 4'
         ) AS choa_chu_kang,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 654B Punggol Drive'
+            WHERE export_location = 'BLK 654B Punggol Drive'
         ) AS punggol_drive,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 132B Tengah Garden Avenue'
+            WHERE export_location = 'BLK 132B Tengah Garden Avenue'
         ) AS tengah,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'BLK 206A Punggol Place'
+            WHERE export_location = 'BLK 206A Punggol Place'
         ) AS punggol_place,
 
         MAX(reading_value) FILTER (
-            WHERE location_name = 'Woodlands 11'
+            WHERE export_location = 'Woodlands 11'
         ) AS woodlands
 
     FROM readings
