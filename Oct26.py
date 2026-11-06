@@ -98,7 +98,6 @@ pivoted AS (
         ) AS woodlands
 
     FROM readings
-
     GROUP BY local_minute
 )
 
@@ -156,15 +155,11 @@ ORDER BY m.local_minute;
 
 def export_october():
     with connection() as conn:
-
-        # Named cursor streams rows instead of loading everything at once.
         with conn.cursor(name="october_export") as cur:
             cur.itersize = 5000
-
             cur.execute(QUERY)
 
             headers = [column.name for column in cur.description]
-
             row_count = 0
 
             with open(
@@ -175,8 +170,6 @@ def export_october():
             ) as file:
 
                 writer = csv.writer(file)
-
-                # Excel column headers
                 writer.writerow(headers)
 
                 for row in cur:
@@ -186,13 +179,17 @@ def export_october():
     print(f"Export completed: {OUTPUT_FILE}")
     print(f"Rows exported: {row_count}")
 
-    if row_count == 44640:
-        print("SUCCESS: Full October 2026 dataset exported.")
-    else:
-        print(
-            f"WARNING: Expected 44,640 rows but received {row_count:,}."
+    if row_count != 44640:
+        raise RuntimeError(
+            f"Expected 44,640 rows but exported {row_count}"
         )
+
+    print("SUCCESS: Full October 2026 dataset exported.")
+
+
+def main():
+    export_october()
 
 
 if __name__ == "__main__":
-    export_october()
+    main()
