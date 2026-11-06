@@ -30,8 +30,7 @@ jobs:
           pip install psycopg2-binary python-dotenv
 
       - name: Export October 2026
-        run: |
-          python Oct26.py
+        run: python Oct26.py
 
       - name: Verify export file
         shell: bash
@@ -43,18 +42,13 @@ jobs:
             exit 1
           fi
 
-          echo "CSV created successfully."
-
           lines=$(wc -l < Oct_2026.csv)
           echo "Total CSV lines: $lines"
 
-          # 44,640 data rows + 1 header row
           if [ "$lines" -ne 44641 ]; then
-            echo "WARNING: Expected 44,641 total lines."
+            echo "ERROR: Expected 44,641 total lines."
             exit 1
           fi
-
-          echo "Full October dataset verified."
 
       - name: Upload October CSV
         uses: actions/upload-artifact@v4
